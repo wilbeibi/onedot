@@ -8,52 +8,62 @@ import io
 import json
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from google import genai
 
 API_KEY = os.environ.get("GEMINI_API_KEY", "")
-MODEL = "gemini-2.5-flash"
+MODEL = os.environ.get("MODEL", "gemini-2.5-flash")
 STATE_PATH = "/tmp/focus-color-state.json"
 JSONL_PATH = os.path.expanduser("~/.config/focus-color/log.jsonl")
 DHASH_THRESHOLD = 6  # Hamming distance: 0=identical, 64=opposite
-PROMPT = """Analyze this screenshot to classify the user's current activity.
+PROMPT = """Classify the user's current screen activity. Do NOT just identify the application — you must READ the visible text content to determine what the user is actually doing.
 
-First, identify the foreground application from the title bar or window chrome.
-Then, examine what the user is actively doing based on visible content, cursor position, and UI state.
+Step 1: Read the title bar, tab titles, and URL bar to identify the foreground app.
+Step 2: READ the visible text in the main content area — conversation messages, code, article text, video titles, terminal output. Quote the most relevant snippet in key_content.
+Step 3: Based on what you read, classify the activity.
 
-Classify into exactly one category:
+Categories:
 
-OUTPUT — Actively producing or creating. Key signals: cursor in an editable area, recent edits visible, typing code, composing text, running commands, writing in a document, solving a problem, designing. Includes: coding in an editor, terminal commands, writing notes or docs, LeetCode (any stage — reading problem, writing solution, debugging), using AI chat to generate/debug code, committing/pushing code.
+OUTPUT — Actively producing work. Signals: cursor in editable area, recent code edits, composing text, running project commands, solving a problem, writing a solution. Includes: coding, terminal commands for a project, writing notes/docs, LeetCode (any stage), using AI to generate/debug/build code, committing/pushing.
 
-INPUT — Intentionally consuming information with focus. Key signals: reading a long-form article or documentation, watching a technical video, studying code or solutions, reviewing a PR. Includes: reading docs, watching a tech talk or tutorial, system design study material, reading email, interview prep reading, using AI chat to research a topic or learn concepts.
+INPUT — Intentionally consuming information with focus. Signals: reading an article or docs, watching a technical video, studying code, reviewing a PR. Includes: reading docs, tech talks, study material, reading email, using AI to research/learn concepts.
 
-DISTRACTED — Off-task, unfocused, or low-value activity. Key signals: entertainment content, social media feeds, idle browsing, no clear goal. Includes: Bilibili/YouTube entertainment or anime, social media scrolling (Twitter/Reddit feeds), shopping, news rabbit holes, scenic/relaxation videos, gaming. Also: lock screen, screensaver, idle desktop. Tool/environment configuration (dotfiles, editor plugins, network setup) that is not directly part of a current project counts as DISTRACTED — it feels productive but delays real output.
+DISTRACTED — Off-task or low-value activity. Signals: entertainment, social media feeds, idle browsing, no clear goal. Includes: entertainment videos, social media scrolling, shopping, news rabbit holes, gaming, lock screen, idle desktop. Also: tool/environment configuration (dotfiles, editor plugins, network setup) not part of a current project — it feels productive but delays real output.
 
-Disambiguation rules:
-- YouTube/Bilibili: INPUT only if clearly a tech talk, tutorial, or lecture. Entertainment, anime, vlogs, scenic videos → DISTRACTED.
+Disambiguation — READ the actual content, don't judge by app name alone:
+- AI chat (Claude Code, Claude, ChatGPT, Gemini): READ the conversation text visible on screen.
+  OUTPUT: user is asking AI to write code, fix a bug, implement a feature, review a diff, or the AI is actively generating code/commands. Look for code blocks, file paths, error messages, implementation discussion.
+  INPUT: user is asking AI to explain a concept, research a topic, compare approaches — learning, not building.
+  DISTRACTED: chitchat, aimless "what should I do", meta-discussion about AI itself, no concrete task visible, browsing AI tool settings.
+- Terminal / Claude Code agent: READ the terminal output.
+  OUTPUT: running tests, git operations, building, editing files, executing project commands.
+  DISTRACTED: configuring unrelated tools, installing random packages, SSH/network setup not for current project, idle prompt with no recent commands.
+- YouTube/Bilibili: READ the video title. INPUT only if clearly a tech talk, tutorial, or lecture. Entertainment, anime, vlogs, scenic → DISTRACTED.
 - Reddit/Twitter/HN: INPUT only if reading a specific technical thread. Scrolling a feed → DISTRACTED.
-- AI chat (Claude, ChatGPT, Gemini): OUTPUT if the conversation is about coding, building, or debugging. INPUT if researching a topic or learning concepts. DISTRACTED if chitchat, aimless exploring, or no clear goal.
-- LeetCode/coding challenges: always OUTPUT — reading the problem, writing the solution, and debugging are all part of producing a solution.
-- Obsidian/notes: OUTPUT if actively writing. INPUT if reading/reviewing notes.
-- Terminal: OUTPUT if running project commands. DISTRACTED if configuring unrelated tools.
-- Browser: judge by visible page content, not the browser itself.
+- LeetCode/coding challenges: always OUTPUT — reading problem, writing solution, debugging are all producing.
+- Obsidian/notes: OUTPUT if actively writing. INPUT if reading/reviewing.
+- Browser: judge by the visible page content and text, not the browser itself.
 - When genuinely ambiguous between OUTPUT and INPUT, prefer OUTPUT if a cursor is active in an editable area.
 
 Examples:
-- VS Code with cursor in a code file, recent edits visible → OUTPUT
-- Terminal running pytest or git push → OUTPUT
-- LeetCode at any stage (reading problem, writing code, debugging) → OUTPUT
-- Claude chat discussing code architecture or debugging → OUTPUT
-- ChatGPT conversation researching system design concepts → INPUT
-- Browser showing React documentation, scroll mid-page → INPUT
-- YouTube showing a system design talk → INPUT
-- Obsidian with a study note open, reading → INPUT
+- VS Code with cursor in code, recent edits visible → OUTPUT
+- Terminal running pytest, git push, or build commands → OUTPUT
+- Claude Code showing "editing file src/auth.py" or generating code → OUTPUT
+- AI chat with visible code blocks and implementation discussion → OUTPUT
+- LeetCode at any stage → OUTPUT
+- AI chat asking "explain how React hooks work" with explanation visible → INPUT
+- Browser showing React docs, scroll mid-page → INPUT
+- YouTube titled "System Design Interview - Distributed Cache" → INPUT
+- AI chat with "what should I work on today" or rambling conversation → DISTRACTED
+- Claude Code idle prompt, no recent commands, user hasn't typed → DISTRACTED
 - Bilibili showing anime or vlogs → DISTRACTED
 - Twitter/Reddit feed scrolling → DISTRACTED
 - Configuring Tailscale, Obsidian plugins, SSH keys → DISTRACTED
 - Lock screen or screensaver → DISTRACTED
 
-Keep the reason under 15 words, describing what you observe."""
+For key_content: quote the most classification-relevant text you can read on screen (a code snippet, conversation message, article title, video title, or terminal command). Max 40 words. This is critical for accurate classification.
+
+Keep the reason under 15 words."""
 
 
 def log_jsonl(event, result, **extra):
@@ -67,6 +77,7 @@ def log_jsonl(event, result, **extra):
         "app": result.get("active_app"),
     }
     if event == "classify":
+        entry["key_content"] = result.get("key_content")
         entry["confidence"] = result.get("confidence")
         entry["reason"] = result.get("reason")
         entry["tokens"] = result.get("tokens")
@@ -131,10 +142,14 @@ def classify(image_data):
                         "type": "STRING",
                         "description": "The foreground app and specific context, e.g. 'Chrome — React docs', 'VS Code — init.lua', 'YouTube — system design talk'",
                     },
+                    "key_content": {
+                        "type": "STRING",
+                        "description": "Quote the most relevant visible text: a code snippet, chat message, article title, video title, or terminal command. Max 40 words. This grounds your classification in what you actually read.",
+                    },
                     "category": {
                         "type": "STRING",
                         "enum": ["OUTPUT", "INPUT", "DISTRACTED"],
-                        "description": "Activity classification based on visible screen content",
+                        "description": "Activity classification based on the visible text content you read, not just the app name",
                     },
                     "confidence": {
                         "type": "NUMBER",
@@ -145,7 +160,7 @@ def classify(image_data):
                         "description": "Under 15 words describing the observed activity",
                     },
                 },
-                "required": ["active_app", "category", "confidence", "reason"],
+                "required": ["active_app", "key_content", "category", "confidence", "reason"],
             },
         ),
     )
@@ -159,27 +174,35 @@ def classify(image_data):
     return result
 
 
-def is_switching(window=6, threshold=3, tail_bytes=10 * 1024):
-    """Check if recent classify entries show frequent context switching."""
+def is_switching(window_minutes=10, threshold=5, tail_bytes=40 * 1024):
+    """Check if recent classify entries show frequent context switching.
+    Counts category transitions within the last window_minutes minutes.
+    Ignores entries older than the window, so idle/sleep gaps reset the signal."""
     if not os.path.exists(JSONL_PATH):
         return False
     try:
+        cutoff = datetime.now().astimezone().replace(tzinfo=None)
+        cutoff -= timedelta(minutes=window_minutes)
         size = os.path.getsize(JSONL_PATH)
         with open(JSONL_PATH) as f:
             if size > tail_bytes:
                 f.seek(size - tail_bytes)
-                f.readline()  # discard partial first line
+                f.readline()
             lines = f.readlines()
-        # Only count real classifications, not idle ticks
         entries = []
-        for line in reversed(lines):
+        for line in lines:
             entry = json.loads(line)
-            if entry.get("event") == "classify":
+            if entry.get("event") != "classify":
+                continue
+            try:
+                ts = datetime.fromisoformat(entry["ts"])
+            except (KeyError, ValueError):
+                continue
+            if ts >= cutoff and entry.get("category"):
                 entries.append(entry)
-                if len(entries) == window:
-                    break
-        apps = set(e["app"] for e in entries if e.get("app"))
-        return len(apps) >= threshold
+        categories = [e["category"] for e in entries]
+        transitions = sum(1 for a, b in zip(categories, categories[1:]) if a != b)
+        return transitions >= threshold
     except Exception:
         return False
 

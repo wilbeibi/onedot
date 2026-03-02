@@ -1,20 +1,33 @@
 local M = {}
 
--- Paths
-local BASE_DIR = os.getenv("HOME") .. "/.hammerspoon/focus-color"
-local UV_PATH = "/opt/homebrew/bin/uv"
-local SCRIPT_PATH = BASE_DIR .. "/classify.py"
-local CONFIG_PATH = BASE_DIR .. "/config.yaml"
+-- Derive BASE_DIR from this script's location (works regardless of where it's cloned)
+local BASE_DIR = debug.getinfo(1, "S").source:match("@(.*/)")
+
+-- Find uv: try PATH first, then common install locations
+local function findUv()
+    local output, ok = hs.execute("which uv")
+    if ok and output then
+        local path = output:gsub("%s+$", "")
+        if path ~= "" then return path end
+    end
+    local fallbacks = { "/opt/homebrew/bin/uv", "/usr/local/bin/uv" }
+    for _, p in ipairs(fallbacks) do
+        local f = io.open(p, "r")
+        if f then f:close(); return p end
+    end
+    return nil
+end
+
+local UV_PATH = findUv()
+local SCRIPT_PATH = BASE_DIR .. "classify.py"
+local CONFIG_PATH = BASE_DIR .. "config.yaml"
 local SCREENSHOT_PATH = "/tmp/focus-color.png"
 
 -- Parse simple YAML (key: value, one per line)
 local function loadConfig()
     local config = {}
     local f = io.open(CONFIG_PATH, "r")
-    if not f then
-        print("[focus-color] config.yaml not found")
-        return config
-    end
+    if not f then return nil end
     for line in f:lines() do
         if not line:match("^#") and line:match(":") then
             local key, val = line:match("^(%S+):%s*(.+)$")
@@ -28,21 +41,38 @@ local function loadConfig()
 end
 
 local config = loadConfig()
+if not config then
+    hs.alert.show("focus-color: config.yaml not found.\nCopy config.yaml.example → config.yaml and add your Gemini API key.")
+    return M
+end
+
 local API_KEY = config.api_key or ""
+if API_KEY == "" or API_KEY == "YOUR_GEMINI_API_KEY_HERE" then
+    hs.alert.show("focus-color: Set your Gemini API key in config.yaml")
+    return M
+end
+
+if not UV_PATH then
+    hs.alert.show("focus-color: 'uv' not found.\nInstall it: curl -LsSf https://astral.sh/uv/install.sh | sh")
+    return M
+end
+
+local MODEL = config.model or "gemini-2.5-flash"
 local INTERVAL = tonumber(config.interval) or 30
 
--- Colors: green/blue/red for output/input/distracted
+-- Desaturated palette — no halation on dark menubar, semantic amber for distracted
 local COLORS = {
-    OUTPUT     = { red = 0.2, green = 0.9, blue = 0.3 },  -- vivid lime, pops on blue bg
-    INPUT      = { red = 0.3, green = 0.85, blue = 1.0 }, -- cyan/sky, distinct from dark blue bg
-    DISTRACTED = { red = 1.0, green = 0.25, blue = 0.25 }, -- bright red
-    UNKNOWN    = { red = 0.6, green = 0.6, blue = 0.6 },  -- light gray
+    OUTPUT     = { red = 0.20, green = 0.65, blue = 0.35 }, -- emerald green
+    INPUT      = { red = 0.40, green = 0.70, blue = 0.95 }, -- lighter sky blue
+    DISTRACTED = { red = 0.85, green = 0.40, blue = 0.20 }, -- burnt orange (warning, not error)
+    UNKNOWN    = { red = 0.55, green = 0.55, blue = 0.55 }, -- mid gray
 }
 
 local menubar = nil
 local timer = nil
 local currentTask = nil
-local RING_COLOR = { red = 1.0, green = 0.85, blue = 0.0 }  -- yellow
+local pauseTimer = nil
+local paused = false
 
 local lastCategory = "UNKNOWN"
 local lastReason = ""
@@ -57,29 +87,39 @@ local function updateDot(category, app, reason, switching)
     lastSwitching = switching or false
     local color = COLORS[category] or COLORS.UNKNOWN
 
+    local SWITCHING_FILL = { red = 0.90, green = 0.65, blue = 0.15 } -- amber warning
     local canvas = hs.canvas.new({ x = 0, y = 0, w = 22, h = 22 })
     if lastSwitching then
+        -- Amber filled dot + category ring = switching with warning vibe
         canvas:appendElements({
             type = "circle",
             center = { x = 11, y = 11 },
-            radius = 9,
-            fillColor = RING_COLOR,
+            radius = 8,
+            fillColor = SWITCHING_FILL,
+            action = "fill",
+        })
+        canvas:appendElements({
+            type = "circle",
+            center = { x = 11, y = 11 },
+            radius = 8,
+            strokeColor = color,
+            strokeWidth = 3,
+            action = "stroke",
+        })
+    else
+        -- Solid dot = sustained focus
+        canvas:appendElements({
+            type = "circle",
+            center = { x = 11, y = 11 },
+            radius = 6,
+            fillColor = color,
             action = "fill",
         })
     end
-    canvas:appendElements({
-        type = "circle",
-        center = { x = 11, y = 11 },
-        radius = 6,
-        fillColor = color,
-        action = "fill",
-    })
     menubar:setIcon(canvas:imageFromCanvas(), false)
     canvas:delete()
 
-    local tip = category .. " — " .. lastApp .. "\n" .. lastReason
-    if lastSwitching then tip = tip .. "\n⚡ switching frequently" end
-    menubar:setTooltip(tip)
+    menubar:setTooltip(lastApp)
 end
 
 local function captureAndClassify()
@@ -114,7 +154,7 @@ local function captureAndClassify()
         end,
         { "run", SCRIPT_PATH, SCREENSHOT_PATH }
     )
-    currentTask:setEnvironment({ GEMINI_API_KEY = API_KEY })
+    currentTask:setEnvironment({ GEMINI_API_KEY = API_KEY, MODEL = MODEL })
     currentTask:start()
 end
 
@@ -125,13 +165,38 @@ function M.start()
     updateDot("UNKNOWN")
 
     menubar:setMenu(function()
-        return {
-            { title = "Focus Color", disabled = true },
-            { title = lastCategory .. " — " .. lastApp, disabled = true },
-            { title = lastReason, disabled = true },
-            { title = "-" },
-            { title = "Stop", fn = function() M.stop() end },
-        }
+        local items = {}
+        if lastReason ~= "" then
+            -- Word-wrap reason into ~40-char lines
+            local line = ""
+            for word in lastReason:gmatch("%S+") do
+                if #line + #word + 1 > 40 and #line > 0 then
+                    table.insert(items, { title = line, disabled = true })
+                    line = word
+                else
+                    line = #line > 0 and (line .. " " .. word) or word
+                end
+            end
+            if #line > 0 then
+                table.insert(items, { title = line, disabled = true })
+            end
+            table.insert(items, { title = "-" })
+        end
+        if paused then
+            table.insert(items, { title = "Resume", fn = function() M.resume() end })
+        else
+            table.insert(items, {
+                title = "Pause",
+                menu = {
+                    { title = "10 minutes", fn = function() M.pause(10) end },
+                    { title = "30 minutes", fn = function() M.pause(30) end },
+                    { title = "1 hour",     fn = function() M.pause(60) end },
+                    { title = "-" },
+                    { title = "Forever",    fn = function() M.pause(nil) end },
+                },
+            })
+        end
+        return items
     end)
 
     timer = hs.timer.doEvery(INTERVAL, captureAndClassify)
@@ -139,7 +204,48 @@ function M.start()
     print("[focus-color] started")
 end
 
+function M.pause(minutes)
+    if paused or not timer then return end
+    paused = true
+    timer:stop()
+    if currentTask and currentTask:isRunning() then currentTask:terminate() end
+
+    -- Show paused state
+    if menubar then
+        local canvas = hs.canvas.new({ x = 0, y = 0, w = 22, h = 22 })
+        canvas:appendElements({
+            type = "circle",
+            center = { x = 11, y = 11 },
+            radius = 6,
+            strokeColor = COLORS.UNKNOWN,
+            strokeWidth = 2,
+            action = "stroke",
+        })
+        menubar:setIcon(canvas:imageFromCanvas(), false)
+        canvas:delete()
+        menubar:setTooltip(minutes and ("Paused for " .. minutes .. "m") or "Paused")
+    end
+
+    if minutes then
+        pauseTimer = hs.timer.doAfter(minutes * 60, function()
+            M.resume()
+        end)
+    end
+    print("[focus-color] paused" .. (minutes and (" for " .. minutes .. "m") or ""))
+end
+
+function M.resume()
+    if not paused then return end
+    if pauseTimer then pauseTimer:stop(); pauseTimer = nil end
+    paused = false
+    timer = hs.timer.doEvery(INTERVAL, captureAndClassify)
+    captureAndClassify()
+    print("[focus-color] resumed")
+end
+
 function M.stop()
+    if pauseTimer then pauseTimer:stop(); pauseTimer = nil end
+    paused = false
     if timer then timer:stop(); timer = nil end
     if currentTask and currentTask:isRunning() then currentTask:terminate() end
     if menubar then menubar:delete(); menubar = nil end
