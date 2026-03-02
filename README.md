@@ -1,85 +1,68 @@
 # focus-color
 
-A Hammerspoon menubar module that classifies your screen activity every 30 seconds using Gemini Flash. It shows a colored dot indicating whether you're producing work, consuming information, or distracted.
+**On average, developers spend 41% of their day not writing code.** Most do not know where the time goes.
 
-## How it works
+focus-color is a macOS menubar tool that automatically categorizes your screen activity using AI — no timers to start, no categories to pick, no browser extensions to install. It reads the actual text visible on your screen and determines what you are doing. At the end of the week, you have a log with over 10,000 data points showing exactly how you spent your time.
 
-Every 30 seconds, Hammerspoon captures a screenshot and sends it to Gemini Flash for classification. The AI reads the visible text on screen (not just the app name) and categorizes your activity:
+<!-- TODO: Insert screenshot of macOS menubar showing the green, blue, and orange dots -->
 
-| Category | Dot Color | Meaning |
-|----------|-----------|---------|
-| OUTPUT | Green | Creating — coding, writing, designing, building |
-| INPUT | Blue | Consuming — reading docs, watching tutorials, studying |
-| DISTRACTED | Orange | Off-task — social media, entertainment, aimless browsing |
+## Categorizing Your Time
 
-When frequent context switching is detected (many category transitions in the last 10 minutes), the dot shows an amber center with a category-colored ring.
+Hammerspoon takes a screenshot at your configured interval. The AI reads the visible text and classifies your activity, shown as a single colored dot in your menubar:
 
-## Prerequisites
+| Dot | Category | Examples |
+|-----|----------|----------|
+| Green | **OUTPUT** | Writing code, composing docs, running terminal commands, debugging |
+| Blue | **INPUT** | Reading documentation, watching a technical talk, studying code |
+| Orange | **DISTRACTED** | Browsing social media, configuring tools, idle screen |
 
-- [Hammerspoon](https://www.hammerspoon.org/) with Screen Recording permission granted
-- [uv](https://docs.astral.sh/uv/) — Python package runner (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
-- A [Gemini API key](https://aistudio.google.com/apikey) (free tier works fine)
+## Data and Logging
 
-## Install
+Everything is logged locally to `~/.config/focus-color/log.jsonl`. Each entry includes the timestamp, active app, visible text snippet, classification, and confidence score.
 
-1. Clone into your Hammerspoon config directory:
+- **View reasoning** — Click the menubar dot to see why the AI classified you that way.
+- **Pause tracking** — Select "Pause" from the dropdown menu when you need a break.
+- **Daily breakdown** — Run `uv run cost.py --today` to see your daily statistics.
+
+> **Privacy:** This tool sends full screenshots to the Gemini API for classification. Do not use it if your screen frequently displays sensitive information such as plaintext passwords, credentials, or confidential customer data.
+
+## Installation
+
+**Prerequisites:** [Hammerspoon](https://www.hammerspoon.org/), [uv](https://docs.astral.sh/uv/), and a [Gemini API key](https://aistudio.google.com/apikey) (free tier is sufficient).
+
+1. Clone the repository:
    ```bash
-   git clone https://github.com/user/focus-color ~/.hammerspoon/focus-color
+   git clone https://github.com/wilbeibi/focus-color ~/.hammerspoon/focus-color
    ```
 
-2. Create your config file:
+2. Create your configuration file:
    ```bash
    cd ~/.hammerspoon/focus-color
    cp config.yaml.example config.yaml
-   # Edit config.yaml and add your Gemini API key
    ```
 
-3. Load the module in `~/.hammerspoon/init.lua`:
+3. Edit `config.yaml` and add your Gemini API key.
+
+4. Add one line to `~/.hammerspoon/init.lua`:
    ```lua
    require("focus-color")
    ```
 
-4. Reload Hammerspoon (or it will auto-reload if you have a pathwatcher on `~/.hammerspoon/`).
-
-The colored dot should appear in your menubar. Click it to see the last classification reason, or to pause tracking.
+5. Reload Hammerspoon. Grant Screen Recording permission if prompted by macOS. The tracking dot will appear in your menubar.
 
 ## Configuration
 
-Edit `config.yaml`:
-
 ```yaml
 api_key: your-gemini-api-key
-model: gemini-2.5-flash
-interval: 30
+model: gemini-2.5-flash   # any Gemini model
+interval: 30               # seconds between screen checks
 ```
-
-| Key | Default | Description |
-|-----|---------|-------------|
-| `api_key` | (required) | Your Gemini API key |
-| `model` | `gemini-2.5-flash` | Gemini model to use |
-| `interval` | `30` | Seconds between screenshots |
-
-## Log
-
-Classifications are logged as JSONL to `~/.config/focus-color/log.jsonl`:
-
-```json
-{"ts": "2026-02-27T14:30:00", "event": "classify", "model": "gemini-2.5-flash", "category": "OUTPUT", "app": "VS Code — init.lua", "key_content": "editing captureAndClassify function", "confidence": 0.92, "reason": "User is writing Lua code in VS Code"}
-```
-
-Events: `classify` (API call made), `idle_exact` (identical screenshot skipped), `idle_dhash` (perceptually similar screenshot skipped).
 
 ## Cost
 
-At 30-second intervals during a 13-hour day (~1,560 calls), idle detection typically reduces actual API calls to a fraction of that. Fits within Gemini's free tier (15 RPM, we use 2 RPM). On the paid tier, expect ~$0.10–0.40/day depending on idle patterns.
+**Free tier:** Runs well within Gemini's free tier (2 RPM, limit is 15 RPM). Idle detection automatically skips unchanged screens.
 
-Check your actual usage:
-
-```bash
-uv run cost.py --today
-uv run cost.py --week
-uv run cost.py 2026-02-27
-```
+**Paid tier:** ~$0.10–0.40/day depending on usage.
 
 ## License
 
