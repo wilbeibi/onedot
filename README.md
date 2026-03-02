@@ -1,13 +1,13 @@
 # focus-color
 
+**The macOS tool that tells you where your day actually went.**
+
+Every week, the average developer loses 41% of their time to things that aren't code.   
+They don't track it because tracking feels like more work.  
+focus-color requires nothing from you. It sits in your menubar, reads the text on your screen, and categorizes what you're doing — automatically, continuously, invisibly.
+
 <img width="326" height="121" alt="image" src="https://github.com/user-attachments/assets/c6e24864-2810-4cdd-bff7-51392dcb42d2" />
 
-
-**On average, developers spend 41% of their day not writing code.** Most do not know where the time goes.
-
-focus-color is a macOS menubar tool that automatically categorizes your screen activity using AI — no timers to start, no categories to pick, no browser extensions to install. It reads the actual text visible on your screen and determines what you are doing. At the end of the week, you have a log with over 10,000 data points showing exactly how you spent your time.
-
-<!-- TODO: Insert screenshot of macOS menubar showing the green, blue, and orange dots -->
 
 ## Categorizing Your Time
 
