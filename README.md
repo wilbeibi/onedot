@@ -1,5 +1,8 @@
 # focus-color
 
+<img width="326" height="121" alt="image" src="https://github.com/user-attachments/assets/c6e24864-2810-4cdd-bff7-51392dcb42d2" />
+
+
 **On average, developers spend 41% of their day not writing code.** Most do not know where the time goes.
 
 focus-color is a macOS menubar tool that automatically categorizes your screen activity using AI — no timers to start, no categories to pick, no browser extensions to install. It reads the actual text visible on your screen and determines what you are doing. At the end of the week, you have a log with over 10,000 data points showing exactly how you spent your time.
