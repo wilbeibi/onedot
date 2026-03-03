@@ -40,11 +40,11 @@ Everything is logged locally to `~/.config/focus-color/log.jsonl`. Each entry in
 
 2. Create your configuration file:
    ```bash
-   cd ~/.hammerspoon/focus-color
-   cp config.yaml.example config.yaml
+   mkdir -p ~/.config/focus-color
+   cp ~/.hammerspoon/focus-color/config.yaml.example ~/.config/focus-color/config.yaml
    ```
 
-3. Edit `config.yaml` and add your Gemini API key.
+3. Edit `~/.config/focus-color/config.yaml` and add your Gemini API key.
 
 4. Add one line to `~/.hammerspoon/init.lua`:
    ```lua
