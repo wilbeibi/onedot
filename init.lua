@@ -76,40 +76,83 @@ local overlay = require("focus-color.overlay")
 local JSONL_PATH = os.getenv("HOME") .. "/.config/focus-color/log.jsonl"
 local HISTORY_MINUTES = 60
 
+local PAUSE_FILE = "/tmp/focus-color-paused"
+
 local menubar = nil
 local timer = nil
 local currentTask = nil
 local pauseTimer = nil
 local paused = false
 
+local function readPauseFile()
+    local f = io.open(PAUSE_FILE, "r")
+    if not f then return nil end
+    local val = f:read("*a"):gsub("%s+", "")
+    f:close()
+    if val == "forever" then return "forever" end
+    return tonumber(val)
+end
+
+local function writePauseFile(resumeAt)
+    local f = io.open(PAUSE_FILE, "w")
+    if not f then return end
+    f:write(tostring(resumeAt))
+    f:close()
+end
+
+local function clearPauseFile()
+    os.remove(PAUSE_FILE)
+end
+
 local lastCategory = "UNKNOWN"
 local lastReason = ""
 local lastApp = ""
-local switchCount = 0
+local switchTimes = {}
 local overlaySuppressedUntil = 0
-local SWITCH_THRESHOLD = 3  -- popup after 3 consecutive switching ticks
+local SWITCH_WINDOW = 180    -- look at last 3 minutes
+local SWITCH_THRESHOLD = 3   -- popup after 3 switches within the window
 
 local function updateIndicator(category, app, reason, switching)
     if not menubar then return end
 
+    local now = os.time()
     if switching then
-        switchCount = switchCount + 1
-    else
-        switchCount = 0
+        table.insert(switchTimes, now)
+    end
+    -- Prune old timestamps outside the window
+    local cutoff = now - SWITCH_WINDOW
+    while #switchTimes > 0 and switchTimes[1] < cutoff do
+        table.remove(switchTimes, 1)
     end
 
-    if switchCount == SWITCH_THRESHOLD and os.time() >= overlaySuppressedUntil then
+    if #switchTimes >= SWITCH_THRESHOLD and now >= overlaySuppressedUntil then
         local summary = history.switchingSummary(JSONL_PATH, INTERVAL, 10)
-        overlay.show("Here's where you've been in the last 10 min:\n\n" .. (summary or ""), function()
-            overlaySuppressedUntil = os.time() + 300
-        end)
+        if summary then
+            -- Write bullets to temp file, send to Gemini for merging
+            local tmpPath = "/tmp/focus-color-merge.txt"
+            local tf = io.open(tmpPath, "w")
+            if tf then tf:write(summary); tf:close() end
+            local mergeTask = hs.task.new(
+                UV_PATH,
+                function(exitCode, stdout, stderr)
+                    local merged = (exitCode == 0 and stdout and stdout:match("%S")) and stdout:gsub("%s+$", "") or summary
+                    overlay.show("Here's where you've been in the last 10 min:\n\n" .. merged, function()
+                        overlaySuppressedUntil = os.time() + 300
+                        switchTimes = {}
+                    end)
+                end,
+                { "run", SCRIPT_PATH, "merge", tmpPath }
+            )
+            mergeTask:setEnvironment({ GEMINI_API_KEY = API_KEY, MODEL = MODEL })
+            mergeTask:start()
+        end
     end
 
     lastCategory = category
     lastApp = app or ""
     lastReason = reason or ""
     local color = COLORS[category] or COLORS.UNKNOWN
-    local switchingColor = (switchCount > 0) and COLORS.SWITCHING or nil
+    local switchingColor = (#switchTimes > 0) and COLORS.SWITCHING or nil
 
     if category == "DISTRACTED" then
         indicator.startBreathe(menubar, color, switchingColor)
@@ -171,6 +214,25 @@ function M.start()
     menubar = hs.menubar.new()
     updateIndicator("UNKNOWN")
 
+    -- Restore pause state from previous session
+    local resumeAt = readPauseFile()
+    if resumeAt then
+        local now = os.time()
+        if resumeAt == "forever" then
+            paused = true
+            indicator.paused(menubar, COLORS.UNKNOWN)
+            menubar:setTooltip("Paused")
+        elseif resumeAt > now then
+            paused = true
+            local remaining = resumeAt - now
+            indicator.paused(menubar, COLORS.UNKNOWN)
+            menubar:setTooltip("Paused for " .. math.ceil(remaining / 60) .. "m")
+            pauseTimer = hs.timer.doAfter(remaining, function() M.resume() end)
+        else
+            clearPauseFile()
+        end
+    end
+
     menubar:setMenu(function()
         local items = {}
         if lastReason ~= "" then
@@ -213,9 +275,11 @@ function M.start()
         return items
     end)
 
-    timer = hs.timer.doEvery(INTERVAL, captureAndClassify)
-    captureAndClassify()
-    print("[focus-color] started")
+    if not paused then
+        timer = hs.timer.doEvery(INTERVAL, captureAndClassify)
+        captureAndClassify()
+    end
+    print("[focus-color] started" .. (paused and " (paused)" or ""))
 end
 
 function M.pause(minutes)
@@ -223,6 +287,9 @@ function M.pause(minutes)
     paused = true
     timer:stop()
     if currentTask and currentTask:isRunning() then currentTask:terminate() end
+
+    -- Persist pause state to survive reloads
+    writePauseFile(minutes and (os.time() + minutes * 60) or "forever")
 
     -- Show paused state
     if menubar then
@@ -242,6 +309,7 @@ function M.resume()
     if not paused then return end
     if pauseTimer then pauseTimer:stop(); pauseTimer = nil end
     paused = false
+    clearPauseFile()
     timer = hs.timer.doEvery(INTERVAL, captureAndClassify)
     captureAndClassify()
     print("[focus-color] resumed")
@@ -250,6 +318,7 @@ end
 function M.stop()
     if pauseTimer then pauseTimer:stop(); pauseTimer = nil end
     paused = false
+    clearPauseFile()
     indicator.stopBreathe()
     if timer then timer:stop(); timer = nil end
     if currentTask and currentTask:isRunning() then currentTask:terminate() end

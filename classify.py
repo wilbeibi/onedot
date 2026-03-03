@@ -167,7 +167,7 @@ def classify(image_data, app_name, prev_activity):
                     },
                     "switching": {
                         "type": "BOOLEAN",
-                        "description": "True if the user switched to a different task/topic from their previous activity. False if continuing the same work (even in a different app or category). Always false if no previous activity is provided.",
+                        "description": "True ONLY if the user switched to a fundamentally different activity from their previous one. Switching apps does NOT count — judge by the actual work. Examples of NOT switching: 'editing init.lua' → 'git push init.lua changes' (same project), 'coding RLE in browser' → 'testing RLE in terminal' (same task), 'reading React docs' → 'coding React component' (same topic). Examples of switching: 'coding RLE algorithm' → 'browsing Reddit', 'writing essay' → 'debugging server'. Always false if no previous activity is provided.",
                     },
                 },
                 "required": ["activity", "key_content", "category", "confidence", "reason", "switching"],
@@ -192,10 +192,39 @@ def classify(image_data, app_name, prev_activity):
 
 
 
+def merge_bullets(bullets_text):
+    """Send bullet points to Gemini to merge similar activities and their durations."""
+    client = genai.Client(api_key=API_KEY)
+    response = client.models.generate_content(
+        model=MODEL,
+        contents=[
+            "Here are bullet points of recent activities with durations:\n\n"
+            + bullets_text
+            + "\n\nMerge similar activities, combining their durations. "
+            "Keep it as bullet points (• prefix). Each bullet should end with (Xm). "
+            "Preserve the chronological order of first appearance. "
+            "Be concise — max 8 words per bullet (excluding duration). "
+            "Return ONLY the merged bullet points, nothing else."
+        ],
+    )
+    return response.text.strip()
+
+
 def main():
     if not API_KEY:
         print("ERROR: GEMINI_API_KEY not set", file=sys.stderr)
         sys.exit(1)
+
+    # Subcommand: merge bullet points from file
+    if len(sys.argv) >= 3 and sys.argv[1] == "merge":
+        with open(sys.argv[2]) as f:
+            bullets = f.read().strip()
+        if not bullets:
+            print("")
+            return
+        merged = merge_bullets(bullets)
+        print(merged)
+        return
 
     if len(sys.argv) < 3:
         print("ERROR: usage: classify.py <image_path> <app_name>", file=sys.stderr)
