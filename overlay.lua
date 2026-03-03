@@ -30,7 +30,7 @@ function overlay.show(text, onDismiss)
     end
     local textH = #lines * lineHeight
     local hintH = 14
-    local w = 440
+    local w = 520
     local h = padding + textH + padding + hintH + padding / 2
 
     local x = screen.x + (screen.w - w) / 2

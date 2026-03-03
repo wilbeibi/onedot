@@ -60,14 +60,14 @@ end
 local MODEL = config.model or "gemini-2.5-flash"
 local INTERVAL = tonumber(config.interval) or 30
 
--- Desaturated palette — no halation on dark menubar, semantic amber for distracted
+-- Desaturated palette — see docs/color-psychology-research.md for rationale
 local COLORS = {
-    OUTPUT     = { red = 0.20, green = 0.65, blue = 0.35 }, -- emerald green
-    INPUT      = { red = 0.40, green = 0.70, blue = 0.95 }, -- lighter sky blue
-    DISTRACTED = { red = 0.85, green = 0.40, blue = 0.20 }, -- burnt orange (warning, not error)
-    UNKNOWN    = { red = 0.55, green = 0.55, blue = 0.55 }, -- mid gray
-    ERROR      = { red = 0.45, green = 0.20, blue = 0.20 }, -- dim maroon (not working)
-    SWITCHING  = { red = 0.90, green = 0.65, blue = 0.15 }, -- amber warning fill
+    OUTPUT     = { red = 0.24, green = 0.65, blue = 0.42 }, -- #3DA66A emerald green: productive creation
+    INPUT      = { red = 0.36, green = 0.64, blue = 0.85 }, -- #5BA4D9 steel blue: calm absorption
+    DISTRACTED = { red = 0.83, green = 0.41, blue = 0.23 }, -- #D4693A burnt orange: attention warning
+    UNKNOWN    = { red = 0.48, green = 0.48, blue = 0.50 }, -- #7A7A80 cool gray: neutral/starting
+    ERROR      = { red = 0.55, green = 0.23, blue = 0.23 }, -- #8C3A3A muted red: visible but not alarming
+    SWITCHING  = { red = 0.83, green = 0.63, blue = 0.19 }, -- #D4A030 muted amber: context transition ring
 }
 
 local indicator = require("focus-color.indicator")
@@ -85,15 +85,21 @@ local paused = false
 local lastCategory = "UNKNOWN"
 local lastReason = ""
 local lastApp = ""
-local lastSwitching = false
+local switchCount = 0
 local overlaySuppressedUntil = 0
+local SWITCH_THRESHOLD = 3  -- popup after 3 consecutive switching ticks
 
-local function updateDot(category, app, reason, switching)
+local function updateIndicator(category, app, reason, switching)
     if not menubar then return end
 
-    -- Show overlay once when context switching starts, suppressed for 5min after dismiss
-    if switching and not lastSwitching and os.time() >= overlaySuppressedUntil then
-        local summary = history.switchingSummary(JSONL_PATH, 10)
+    if switching then
+        switchCount = switchCount + 1
+    else
+        switchCount = 0
+    end
+
+    if switchCount == SWITCH_THRESHOLD and os.time() >= overlaySuppressedUntil then
+        local summary = history.switchingSummary(JSONL_PATH, INTERVAL, 10)
         overlay.show("Here's where you've been in the last 10 min:\n\n" .. (summary or ""), function()
             overlaySuppressedUntil = os.time() + 300
         end)
@@ -102,9 +108,8 @@ local function updateDot(category, app, reason, switching)
     lastCategory = category
     lastApp = app or ""
     lastReason = reason or ""
-    lastSwitching = switching or false
     local color = COLORS[category] or COLORS.UNKNOWN
-    local switchingColor = lastSwitching and COLORS.SWITCHING or nil
+    local switchingColor = (switchCount > 0) and COLORS.SWITCHING or nil
 
     if category == "DISTRACTED" then
         indicator.startBreathe(menubar, color, switchingColor)
@@ -117,6 +122,10 @@ end
 
 local function captureAndClassify()
     if currentTask and currentTask:isRunning() then return end
+
+    -- Get frontmost app name from the OS (stable, no AI guessing)
+    local frontApp = hs.application.frontmostApplication()
+    local appName = frontApp and frontApp:name() or "Unknown"
 
     -- Hammerspoon captures screenshot (has Screen Recording permission)
     local screen = hs.screen.mainScreen()
@@ -135,18 +144,22 @@ local function captureAndClassify()
                 local ok, result = pcall(hs.json.decode, stdout)
                 if ok and result then
                     if COLORS[result.category] then
-                        updateDot(result.category, result.active_app, result.reason, result.switching)
+                        local display = appName
+                        if result.activity and result.activity ~= "" then
+                            display = appName .. " — " .. result.activity
+                        end
+                        updateIndicator(result.category, display, result.reason, result.switching)
                     else
                         print("[focus-color] unknown category: " .. tostring(result.category))
                     end
                 end
             else
                 print("[focus-color] error: " .. (stderr or "unknown"))
-                updateDot("ERROR", nil, "Classification failed", nil)
+                updateIndicator("ERROR", nil, "Classification failed", nil)
             end
             currentTask = nil
         end,
-        { "run", SCRIPT_PATH, SCREENSHOT_PATH }
+        { "run", SCRIPT_PATH, SCREENSHOT_PATH, appName }
     )
     currentTask:setEnvironment({ GEMINI_API_KEY = API_KEY, MODEL = MODEL })
     currentTask:start()
@@ -156,19 +169,21 @@ function M.start()
     if menubar then return end
 
     menubar = hs.menubar.new()
-    updateDot("UNKNOWN")
+    updateIndicator("UNKNOWN")
 
     menubar:setMenu(function()
         local items = {}
         if lastReason ~= "" then
-            -- Word-wrap reason into ~40-char lines
+            -- Word-wrap reason into ~40-char lines (UTF-8-aware)
             local line = ""
             for word in lastReason:gmatch("%S+") do
-                if #line + #word + 1 > 40 and #line > 0 then
+                local lineLen = utf8.len(line) or #line
+                local wordLen = utf8.len(word) or #word
+                if lineLen + wordLen + 1 > 40 and lineLen > 0 then
                     table.insert(items, { title = line, disabled = true })
                     line = word
                 else
-                    line = #line > 0 and (line .. " " .. word) or word
+                    line = lineLen > 0 and (line .. " " .. word) or word
                 end
             end
             if #line > 0 then

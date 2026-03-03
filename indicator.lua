@@ -11,21 +11,34 @@ local function draw(menubar, color, switchingColor, alpha)
 
     local canvas = hs.canvas.new({ x = 0, y = 0, w = 22, h = 22 })
     if switchingColor then
-        local fill = { red = switchingColor.red, green = switchingColor.green, blue = switchingColor.blue, alpha = alpha }
+        local sc = { red = switchingColor.red, green = switchingColor.green, blue = switchingColor.blue, alpha = alpha }
+        local cx, cy, r = 11, 11, 6
+        -- Split dot: left half = category color, right half = switching amber
+        -- Split dot: left half = category color, right half = switching amber
+        local function semicircle(startAngle, sweep)
+            local pts = {}
+            local steps = 20
+            for i = 0, steps do
+                local angle = startAngle + (sweep * i / steps)
+                table.insert(pts, { x = cx + r * math.cos(angle), y = cy + r * math.sin(angle) })
+            end
+            return pts
+        end
+        -- Left semicircle (category)
         canvas:appendElements({
-            type = "circle",
-            center = { x = 11, y = 11 },
-            radius = 8,
-            fillColor = fill,
+            type = "segments",
+            closed = true,
             action = "fill",
+            fillColor = c,
+            coordinates = semicircle(-math.pi/2, -math.pi),
         })
+        -- Right semicircle (switching)
         canvas:appendElements({
-            type = "circle",
-            center = { x = 11, y = 11 },
-            radius = 8,
-            strokeColor = c,
-            strokeWidth = 3,
-            action = "stroke",
+            type = "segments",
+            closed = true,
+            action = "fill",
+            fillColor = sc,
+            coordinates = semicircle(-math.pi/2, math.pi),
         })
     else
         canvas:appendElements({

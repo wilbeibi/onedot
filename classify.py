@@ -7,8 +7,9 @@ import hashlib
 import io
 import json
 import os
+import re
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from google import genai
 
 API_KEY = os.environ.get("GEMINI_API_KEY", "")
@@ -74,7 +75,8 @@ def log_jsonl(event, result, **extra):
         "event": event,
         "model": MODEL,
         "category": result.get("category"),
-        "app": result.get("active_app"),
+        "app": result.get("app"),
+        "activity": result.get("activity"),
     }
     if event == "classify":
         entry["key_content"] = result.get("key_content")
@@ -85,7 +87,7 @@ def log_jsonl(event, result, **extra):
     if extra:
         entry.update(extra)
     with open(JSONL_PATH, "a") as f:
-        f.write(json.dumps(entry) + "\n")
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
 def file_hash(data):
@@ -122,25 +124,29 @@ def load_state():
 
 def save_state(dhash_val, file_hash_val, result):
     with open(STATE_PATH, "w") as f:
-        json.dump({"dhash": dhash_val, "file_hash": file_hash_val, "last_result": result}, f)
+        json.dump({"dhash": dhash_val, "file_hash": file_hash_val, "last_result": result}, f, ensure_ascii=False)
 
 
-def classify(image_data):
+def classify(image_data, app_name, prev_activity):
     client = genai.Client(api_key=API_KEY)
+    prompt_text = f"The foreground application is: {app_name}\n\n"
+    if prev_activity:
+        prompt_text += f"The user's previous activity was: {prev_activity}\n\n"
+    prompt_text += PROMPT
     response = client.models.generate_content(
         model=MODEL,
         contents=[
             genai.types.Part.from_bytes(data=image_data, mime_type="image/png"),
-            PROMPT,
+            prompt_text,
         ],
         config=genai.types.GenerateContentConfig(
             response_mime_type="application/json",
             response_schema={
                 "type": "OBJECT",
                 "properties": {
-                    "active_app": {
+                    "activity": {
                         "type": "STRING",
-                        "description": "The foreground app and specific context, e.g. 'Chrome — React docs', 'VS Code — init.lua', 'YouTube — system design talk'",
+                        "description": "The specific activity, without the app name. E.g. 'editing init.lua timer logic', 'reading React hooks docs', 'watching 外星人纪录片'. Max 10 words.",
                     },
                     "key_content": {
                         "type": "STRING",
@@ -159,13 +165,24 @@ def classify(image_data):
                         "type": "STRING",
                         "description": "Under 15 words describing the observed activity",
                     },
+                    "switching": {
+                        "type": "BOOLEAN",
+                        "description": "True if the user switched to a different task/topic from their previous activity. False if continuing the same work (even in a different app or category). Always false if no previous activity is provided.",
+                    },
                 },
-                "required": ["active_app", "key_content", "category", "confidence", "reason"],
+                "required": ["activity", "key_content", "category", "confidence", "reason", "switching"],
             },
         ),
     )
 
     result = json.loads(response.text)
+    # Gemini structured output bugs: literal \uXXXX escapes and control chars in strings
+    for k, v in result.items():
+        if isinstance(v, str):
+            if "\\u" in v:
+                v = re.sub(r"\\u([0-9a-fA-F]{4})", lambda m: chr(int(m.group(1), 16)), v)
+            result[k] = re.sub(r"[\x00-\x09\x0b\x0c\x0e-\x1f]+", " ", v).strip()
+    result["app"] = app_name
     if response.usage_metadata:
         result["tokens"] = {
             "input": response.usage_metadata.prompt_token_count,
@@ -174,49 +191,18 @@ def classify(image_data):
     return result
 
 
-def is_context_switching(window_minutes=10, threshold=5, tail_bytes=40 * 1024):
-    """Check if recent classify entries show frequent context switching.
-    Counts category transitions within the last window_minutes minutes.
-    Ignores entries older than the window, so idle/sleep gaps reset the signal."""
-    if not os.path.exists(JSONL_PATH):
-        return False
-    try:
-        cutoff = datetime.now().astimezone().replace(tzinfo=None)
-        cutoff -= timedelta(minutes=window_minutes)
-        size = os.path.getsize(JSONL_PATH)
-        with open(JSONL_PATH) as f:
-            if size > tail_bytes:
-                f.seek(size - tail_bytes)
-                f.readline()
-            lines = f.readlines()
-        entries = []
-        for line in lines:
-            entry = json.loads(line)
-            if entry.get("event") != "classify":
-                continue
-            try:
-                ts = datetime.fromisoformat(entry["ts"])
-            except (KeyError, ValueError):
-                continue
-            if ts >= cutoff and entry.get("category"):
-                entries.append(entry)
-        categories = [e["category"] for e in entries]
-        transitions = sum(1 for a, b in zip(categories, categories[1:]) if a != b)
-        return transitions >= threshold
-    except Exception:
-        return False
-
 
 def main():
     if not API_KEY:
         print("ERROR: GEMINI_API_KEY not set", file=sys.stderr)
         sys.exit(1)
 
-    if len(sys.argv) < 2:
-        print("ERROR: image path required as argument", file=sys.stderr)
+    if len(sys.argv) < 3:
+        print("ERROR: usage: classify.py <image_path> <app_name>", file=sys.stderr)
         sys.exit(1)
 
     image_path = sys.argv[1]
+    app_name = sys.argv[2]
     if not os.path.exists(image_path):
         print(f"ERROR: image not found: {image_path}", file=sys.stderr)
         sys.exit(1)
@@ -231,27 +217,28 @@ def main():
 
     # Tier 1: exact file match — no image processing, no Pillow import
     if state and current_file_hash == state.get("file_hash"):
-        output = dict(state["last_result"], idle=True)
-        log_jsonl("idle_exact", state["last_result"])
-        print(json.dumps(output))
+        prev = dict(state["last_result"], app=app_name, idle=True)
+        log_jsonl("idle_exact", prev)
+        print(json.dumps(prev, ensure_ascii=False))
         return
 
     # Tier 2: perceptual similarity via dHash — catches clock/cursor changes
     current_dhash = dhash(image_data)
     if state and hamming(current_dhash, state.get("dhash", 0)) < DHASH_THRESHOLD:
         dist = hamming(current_dhash, state["dhash"])
-        save_state(current_dhash, current_file_hash, state["last_result"])
-        log_jsonl("idle_dhash", state["last_result"], hamming=dist)
-        output = dict(state["last_result"], idle=True)
-        print(json.dumps(output))
+        prev = dict(state["last_result"], app=app_name)
+        save_state(current_dhash, current_file_hash, prev)
+        log_jsonl("idle_dhash", prev, hamming=dist)
+        output = dict(prev, idle=True)
+        print(json.dumps(output, ensure_ascii=False))
         return
 
     # --- Screen changed: classify with Gemini ---
-    result = classify(image_data)
-    result["switching"] = is_context_switching()
+    prev_activity = state.get("last_result", {}).get("activity") if state else None
+    result = classify(image_data, app_name, prev_activity)
     save_state(current_dhash, current_file_hash, result)
     log_jsonl("classify", result)
-    print(json.dumps(result))
+    print(json.dumps(result, ensure_ascii=False))
 
 
 if __name__ == "__main__":
