@@ -20,7 +20,7 @@ end
 
 local UV_PATH = findUv()
 local SCRIPT_PATH = BASE_DIR .. "classify.py"
-local CONFIG_PATH = BASE_DIR .. "config.yaml"
+local CONFIG_PATH = os.getenv("HOME") .. "/.config/focus-color/config.yaml"
 local SCREENSHOT_PATH = "/tmp/focus-color.png"
 
 -- Parse simple YAML (key: value, one per line)
@@ -42,13 +42,14 @@ end
 
 local config = loadConfig()
 if not config then
-    hs.alert.show("focus-color: config.yaml not found.\nCopy config.yaml.example → config.yaml and add your Gemini API key.")
+    hs.alert.show("focus-color: ~/.config/focus-color/config.yaml not found.\nCopy config.yaml.example there and add your Gemini API key.")
     return M
 end
 
-local API_KEY = config.api_key or ""
-if API_KEY == "" or API_KEY == "YOUR_GEMINI_API_KEY_HERE" then
-    hs.alert.show("focus-color: Set your Gemini API key in config.yaml")
+local api_key_raw = config.api_key or ""
+local API_KEY = os.getenv(api_key_raw) or api_key_raw
+if API_KEY == "" then
+    hs.alert.show("focus-color: Set api_key in config.yaml (env var name or raw key)")
     return M
 end
 
@@ -68,6 +69,10 @@ local COLORS = {
     UNKNOWN    = { red = 0.55, green = 0.55, blue = 0.55 }, -- mid gray
 }
 
+local history = require("focus-color.history")
+local JSONL_PATH = os.getenv("HOME") .. "/.config/focus-color/log.jsonl"
+local HISTORY_MINUTES = 60
+
 local menubar = nil
 local timer = nil
 local currentTask = nil
@@ -78,9 +83,24 @@ local lastCategory = "UNKNOWN"
 local lastReason = ""
 local lastApp = ""
 local lastSwitching = false
+local prevCategory = "UNKNOWN"  -- category before current streak
+local streakCount = 0
+local STREAK_THRESHOLD = 3      -- ticks before showing popup
 
 local function updateDot(category, app, reason, switching)
     if not menubar then return end
+
+    -- Debounced context-switch popup
+    if category == lastCategory then
+        streakCount = streakCount + 1
+    else
+        prevCategory = lastCategory
+        streakCount = 1
+    end
+    if streakCount == STREAK_THRESHOLD and prevCategory ~= "UNKNOWN" and category ~= prevCategory then
+        hs.alert.show(app or category, 3)
+    end
+
     lastCategory = category
     lastApp = app or ""
     lastReason = reason or ""
@@ -182,6 +202,11 @@ function M.start()
             end
             table.insert(items, { title = "-" })
         end
+        table.insert(items, {
+            title = "Last " .. HISTORY_MINUTES .. " minutes",
+            menu = history.recentActivity(JSONL_PATH, INTERVAL, HISTORY_MINUTES),
+        })
+        table.insert(items, { title = "-" })
         if paused then
             table.insert(items, { title = "Resume", fn = function() M.resume() end })
         else
