@@ -174,7 +174,7 @@ def classify(image_data):
     return result
 
 
-def is_switching(window_minutes=10, threshold=5, tail_bytes=40 * 1024):
+def is_context_switching(window_minutes=10, threshold=5, tail_bytes=40 * 1024):
     """Check if recent classify entries show frequent context switching.
     Counts category transitions within the last window_minutes minutes.
     Ignores entries older than the window, so idle/sleep gaps reset the signal."""
@@ -248,7 +248,7 @@ def main():
 
     # --- Screen changed: classify with Gemini ---
     result = classify(image_data)
-    result["switching"] = is_switching()
+    result["switching"] = is_context_switching()
     save_state(current_dhash, current_file_hash, result)
     log_jsonl("classify", result)
     print(json.dumps(result))

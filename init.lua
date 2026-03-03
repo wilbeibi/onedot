@@ -46,10 +46,9 @@ if not config then
     return M
 end
 
-local api_key_raw = config.api_key or ""
-local API_KEY = os.getenv(api_key_raw) or api_key_raw
+local API_KEY = config.api_key or ""
 if API_KEY == "" then
-    hs.alert.show("focus-color: Set api_key in config.yaml (env var name or raw key)")
+    hs.alert.show("focus-color: Set api_key in ~/.config/focus-color/config.yaml")
     return M
 end
 
@@ -67,9 +66,13 @@ local COLORS = {
     INPUT      = { red = 0.40, green = 0.70, blue = 0.95 }, -- lighter sky blue
     DISTRACTED = { red = 0.85, green = 0.40, blue = 0.20 }, -- burnt orange (warning, not error)
     UNKNOWN    = { red = 0.55, green = 0.55, blue = 0.55 }, -- mid gray
+    ERROR      = { red = 0.45, green = 0.20, blue = 0.20 }, -- dim maroon (not working)
+    SWITCHING  = { red = 0.90, green = 0.65, blue = 0.15 }, -- amber warning fill
 }
 
+local indicator = require("focus-color.indicator")
 local history = require("focus-color.history")
+local overlay = require("focus-color.overlay")
 local JSONL_PATH = os.getenv("HOME") .. "/.config/focus-color/log.jsonl"
 local HISTORY_MINUTES = 60
 
@@ -83,22 +86,17 @@ local lastCategory = "UNKNOWN"
 local lastReason = ""
 local lastApp = ""
 local lastSwitching = false
-local prevCategory = "UNKNOWN"  -- category before current streak
-local streakCount = 0
-local STREAK_THRESHOLD = 3      -- ticks before showing popup
+local overlaySuppressedUntil = 0
 
 local function updateDot(category, app, reason, switching)
     if not menubar then return end
 
-    -- Debounced context-switch popup
-    if category == lastCategory then
-        streakCount = streakCount + 1
-    else
-        prevCategory = lastCategory
-        streakCount = 1
-    end
-    if streakCount == STREAK_THRESHOLD and prevCategory ~= "UNKNOWN" and category ~= prevCategory then
-        hs.alert.show(app or category, 3)
+    -- Show overlay once when context switching starts, suppressed for 5min after dismiss
+    if switching and not lastSwitching and os.time() >= overlaySuppressedUntil then
+        local summary = history.switchingSummary(JSONL_PATH, 10)
+        overlay.show("Here's where you've been in the last 10 min:\n\n" .. (summary or ""), function()
+            overlaySuppressedUntil = os.time() + 300
+        end)
     end
 
     lastCategory = category
@@ -106,40 +104,15 @@ local function updateDot(category, app, reason, switching)
     lastReason = reason or ""
     lastSwitching = switching or false
     local color = COLORS[category] or COLORS.UNKNOWN
+    local switchingColor = lastSwitching and COLORS.SWITCHING or nil
 
-    local SWITCHING_FILL = { red = 0.90, green = 0.65, blue = 0.15 } -- amber warning
-    local canvas = hs.canvas.new({ x = 0, y = 0, w = 22, h = 22 })
-    if lastSwitching then
-        -- Amber filled dot + category ring = switching with warning vibe
-        canvas:appendElements({
-            type = "circle",
-            center = { x = 11, y = 11 },
-            radius = 8,
-            fillColor = SWITCHING_FILL,
-            action = "fill",
-        })
-        canvas:appendElements({
-            type = "circle",
-            center = { x = 11, y = 11 },
-            radius = 8,
-            strokeColor = color,
-            strokeWidth = 3,
-            action = "stroke",
-        })
+    if category == "DISTRACTED" then
+        indicator.startBreathe(menubar, color, switchingColor)
     else
-        -- Solid dot = sustained focus
-        canvas:appendElements({
-            type = "circle",
-            center = { x = 11, y = 11 },
-            radius = 6,
-            fillColor = color,
-            action = "fill",
-        })
+        indicator.solid(menubar, color, switchingColor)
     end
-    menubar:setIcon(canvas:imageFromCanvas(), false)
-    canvas:delete()
 
-    menubar:setTooltip(lastApp)
+    menubar:setTooltip(lastCategory == "UNKNOWN" and (lastReason ~= "" and lastReason or "Starting…") or lastApp)
 end
 
 local function captureAndClassify()
@@ -169,6 +142,7 @@ local function captureAndClassify()
                 end
             else
                 print("[focus-color] error: " .. (stderr or "unknown"))
+                updateDot("ERROR", nil, "Classification failed", nil)
             end
             currentTask = nil
         end,
@@ -237,17 +211,7 @@ function M.pause(minutes)
 
     -- Show paused state
     if menubar then
-        local canvas = hs.canvas.new({ x = 0, y = 0, w = 22, h = 22 })
-        canvas:appendElements({
-            type = "circle",
-            center = { x = 11, y = 11 },
-            radius = 6,
-            strokeColor = COLORS.UNKNOWN,
-            strokeWidth = 2,
-            action = "stroke",
-        })
-        menubar:setIcon(canvas:imageFromCanvas(), false)
-        canvas:delete()
+        indicator.paused(menubar, COLORS.UNKNOWN)
         menubar:setTooltip(minutes and ("Paused for " .. minutes .. "m") or "Paused")
     end
 
@@ -271,6 +235,7 @@ end
 function M.stop()
     if pauseTimer then pauseTimer:stop(); pauseTimer = nil end
     paused = false
+    indicator.stopBreathe()
     if timer then timer:stop(); timer = nil end
     if currentTask and currentTask:isRunning() then currentTask:terminate() end
     if menubar then menubar:delete(); menubar = nil end

@@ -7,11 +7,10 @@ local function parseISO(ts)
                      hour = tonumber(hr), min = tonumber(mi), sec = tonumber(s) })
 end
 
-function H.recentActivity(jsonl_path, interval, minutes)
+local function readRecentEntries(jsonl_path, minutes)
     local f = io.open(jsonl_path, "r")
-    if not f then return {{ title = "No log data yet", disabled = true }} end
+    if not f then return nil end
 
-    -- Read tail of file (~32KB covers 20 min easily)
     local size = f:seek("end")
     local tail_bytes = 32 * 1024
     if size > tail_bytes then
@@ -28,13 +27,19 @@ function H.recentActivity(jsonl_path, interval, minutes)
         if ok and entry and entry.ts and entry.app then
             local t = parseISO(entry.ts)
             if t and t >= cutoff then
-                table.insert(entries, { app = entry.app })
+                table.insert(entries, { app = entry.app, time = t })
             end
         end
     end
     f:close()
 
-    if #entries == 0 then return {{ title = "No recent activity", disabled = true }} end
+    if #entries == 0 then return nil end
+    return entries
+end
+
+function H.recentActivity(jsonl_path, interval, minutes)
+    local entries = readRecentEntries(jsonl_path, minutes)
+    if not entries then return {{ title = "No log data yet", disabled = true }} end
 
     -- Group consecutive same-app entries
     local groups = {}
@@ -57,6 +62,35 @@ function H.recentActivity(jsonl_path, interval, minutes)
         table.insert(items, { title = app .. " (" .. mins .. "m)", disabled = true })
     end
     return items
+end
+
+function H.switchingSummary(jsonl_path, minutes)
+    local entries = readRecentEntries(jsonl_path, minutes)
+    if not entries then return nil end
+
+    -- Deduplicate consecutive, keep first timestamp of each stretch
+    local trail = { entries[1] }
+    for i = 2, #entries do
+        if entries[i].app ~= entries[i - 1].app then
+            table.insert(trail, entries[i])
+        end
+    end
+
+    -- Show last N transitions
+    local max_lines = 6
+    local start = math.max(1, #trail - max_lines + 1)
+    local lines = {}
+    for i = start, #trail do
+        local app = trail[i].app
+        local ts = os.date("%H:%M", trail[i].time)
+        if #app > 40 then
+            table.insert(lines, ts .. "  → " .. app:sub(1, 40))
+            table.insert(lines, "        " .. app:sub(41))
+        else
+            table.insert(lines, ts .. "  → " .. app)
+        end
+    end
+    return table.concat(lines, "\n")
 end
 
 return H
