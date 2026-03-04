@@ -247,7 +247,7 @@ def main():
 
     # Tier 1: exact file match — no image processing, no Pillow import
     if state and current_file_hash == state.get("file_hash"):
-        prev = dict(state["last_result"], app=app_name, idle=True)
+        prev = dict(state["last_result"], app=app_name, idle=True, switching=False)
         log_jsonl("idle_exact", prev)
         print(json.dumps(prev, ensure_ascii=False))
         return
@@ -256,7 +256,7 @@ def main():
     current_dhash = dhash(image_data)
     if state and hamming(current_dhash, state.get("dhash", 0)) < DHASH_THRESHOLD:
         dist = hamming(current_dhash, state["dhash"])
-        prev = dict(state["last_result"], app=app_name)
+        prev = dict(state["last_result"], app=app_name, switching=False)
         save_state(current_dhash, current_file_hash, prev)
         log_jsonl("idle_dhash", prev, hamming=dist)
         output = dict(prev, idle=True)
