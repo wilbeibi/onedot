@@ -207,6 +207,13 @@ local function captureAndClassify()
         print("[focus-color] failed to capture screenshot")
         return
     end
+    -- Downscale for faster upload to Gemini (Retina screenshots are unnecessarily large)
+    local size = snapshot:size()
+    local MAX_W = 1536
+    if size.w > MAX_W then
+        local scale = MAX_W / size.w
+        snapshot = snapshot:copy():setSize({ w = MAX_W, h = math.floor(size.h * scale) })
+    end
     snapshot:saveToFile(SCREENSHOT_PATH)
 
     -- Spawn Python to classify the screenshot

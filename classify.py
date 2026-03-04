@@ -140,6 +140,7 @@ def classify(image_data, app_name, prev_activity):
             prompt_text,
         ],
         config=genai.types.GenerateContentConfig(
+            media_resolution=genai.types.MediaResolution.MEDIA_RESOLUTION_MEDIUM,  # try LOW if accuracy holds
             response_mime_type="application/json",
             response_schema={
                 "type": "OBJECT",
