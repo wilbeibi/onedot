@@ -133,8 +133,8 @@ local lastReason = ""
 local lastApp = ""
 local switchTimes = {}
 local overlaySuppressedUntil = 0
-local SWITCH_WINDOW = 180    -- look at last 3 minutes
-local SWITCH_THRESHOLD = 3   -- popup after 3 switches within the window
+local SWITCH_WINDOW = 600    -- look at last 10 minutes
+local SWITCH_THRESHOLD = 5   -- popup after 5 switches within the window
 
 local function updateIndicator(category, app, reason, switching)
     if not menubar then return end
@@ -150,7 +150,8 @@ local function updateIndicator(category, app, reason, switching)
     end
 
     if #switchTimes >= SWITCH_THRESHOLD and now >= overlaySuppressedUntil then
-        local summary = history.switchingSummary(JSONL_PATH, INTERVAL, 10)
+        local switchMinutes = SWITCH_WINDOW / 60
+        local summary = history.switchingSummary(JSONL_PATH, INTERVAL, switchMinutes)
         if summary then
             -- Write bullets to temp file, send to Gemini for merging
             local tmpPath = "/tmp/focus-color-merge.txt"
@@ -160,7 +161,7 @@ local function updateIndicator(category, app, reason, switching)
                 UV_PATH,
                 function(exitCode, stdout, stderr)
                     local merged = (exitCode == 0 and stdout and stdout:match("%S")) and stdout:gsub("%s+$", "") or summary
-                    overlay.show("Here's where you've been in the last 10 min:\n\n" .. merged, function()
+                    overlay.show("Here's where you've been in the last " .. math.floor(switchMinutes) .. " min:\n\n" .. merged, function()
                         overlaySuppressedUntil = os.time() + 300
                         switchTimes = {}
                     end)

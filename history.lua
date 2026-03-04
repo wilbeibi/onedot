@@ -15,6 +15,12 @@ local function parseISO(ts)
                      hour = tonumber(hr), min = tonumber(mi), sec = tonumber(s) })
 end
 
+local function formatDuration(ticks, interval)
+    local secs = ticks * interval
+    if secs < 60 then return secs .. "s" end
+    return math.floor(secs / 60 + 0.5) .. "m"
+end
+
 local function readRecentEntries(jsonl_path, minutes)
     local f = io.open(jsonl_path, "r")
     if not f then return nil end
@@ -65,13 +71,13 @@ function H.recentActivity(jsonl_path, interval, minutes)
 
     local items = {}
     for _, g in ipairs(groups) do
-        local mins = math.max(1, math.floor(g.ticks * interval / 60 + 0.5))
+        local dur = formatDuration(g.ticks, interval)
         local display = g.app
         if g.activity and g.activity ~= "" then
             display = display .. " — " .. g.activity
         end
         display = utf8_trunc(display, 55)
-        table.insert(items, { title = display .. " (" .. mins .. "m)", disabled = true })
+        table.insert(items, { title = display .. " (" .. dur .. ")", disabled = true })
     end
     return items
 end
@@ -96,9 +102,9 @@ function H.switchingSummary(jsonl_path, interval, minutes)
 
     local lines = {}
     for _, g in ipairs(groups) do
-        local mins = math.max(1, math.floor(g.ticks * interval / 60 + 0.5))
+        local dur = formatDuration(g.ticks, interval)
         local text = g.activity or "idle"
-        local bullet = "• " .. text .. " (" .. mins .. "m)"
+        local bullet = "• " .. text .. " (" .. dur .. ")"
         table.insert(lines, utf8_trunc(bullet, 60))
     end
     return table.concat(lines, "\n")
