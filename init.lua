@@ -32,6 +32,8 @@ local function loadConfig()
         if not line:match("^#") and line:match(":") then
             local key, val = line:match("^(%S+):%s*(.+)$")
             if key and val then
+                val = val:gsub("%s+#.*$", "")   -- strip inline comments
+                val = val:match('^"(.*)"$') or val:match("^'(.*)'$") or val  -- strip quotes
                 config[key] = val
             end
         end
@@ -60,6 +62,20 @@ end
 local MODEL = config.model or "gemini-2.5-flash"
 local INTERVAL = tonumber(config.interval) or 30
 
+local function parseAppList(raw)
+    local set = {}
+    if not raw or raw == "" then return set end
+    for part in raw:gmatch("[^,]+") do
+        local app = part:gsub("^%s+", ""):gsub("%s+$", "")
+        if app ~= "" then
+            set[app] = true
+        end
+    end
+    return set
+end
+
+local EXCLUDED_APPS = parseAppList(config.exclude_apps)
+
 -- Desaturated palette — see docs/color-psychology-research.md for rationale
 local COLORS = {
     OUTPUT     = { red = 0.24, green = 0.65, blue = 0.42 }, -- #3DA66A emerald green: productive creation
@@ -75,6 +91,14 @@ local history = require("focus-color.history")
 local overlay = require("focus-color.overlay")
 local JSONL_PATH = os.getenv("HOME") .. "/.config/focus-color/log.jsonl"
 local HISTORY_MINUTES = 60
+
+-- Append a JSONL log entry (mirrors classify.py's log_jsonl format)
+local function logEntry(entry)
+    entry.ts = entry.ts or os.date("%Y-%m-%dT%H:%M:%S")
+    entry.model = entry.model or MODEL
+    local lf = io.open(JSONL_PATH, "a")
+    if lf then lf:write(hs.json.encode(entry) .. "\n"); lf:close() end
+end
 
 local PAUSE_FILE = "/tmp/focus-color-paused"
 
@@ -170,6 +194,12 @@ local function captureAndClassify()
     local frontApp = hs.application.frontmostApplication()
     local appName = frontApp and frontApp:name() or "Unknown"
 
+    if EXCLUDED_APPS[appName] then
+        logEntry({ event = "excluded", category = "EXCLUDED", app = appName, activity = "excluded", reason = "excluded app" })
+        updateIndicator("UNKNOWN", appName .. " — excluded", "App excluded from capture", false)
+        return
+    end
+
     -- Hammerspoon captures screenshot (has Screen Recording permission)
     local screen = hs.screen.mainScreen()
     local snapshot = screen:snapshot()
@@ -194,6 +224,7 @@ local function captureAndClassify()
                         updateIndicator(result.category, display, result.reason, result.switching)
                     else
                         print("[focus-color] unknown category: " .. tostring(result.category))
+                        updateIndicator("UNKNOWN", appName, "Unknown category: " .. tostring(result.category), false)
                     end
                 end
             else

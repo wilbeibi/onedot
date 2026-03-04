@@ -59,6 +59,7 @@ Everything is logged locally to `~/.config/focus-color/log.jsonl`. Each entry in
 api_key: your-gemini-api-key
 model: gemini-2.5-flash   # any Gemini model
 interval: 30               # seconds between screen checks
+exclude_apps: 1Password, Keychain Access, Slack  # optional, comma-separated app names
 ```
 
 ## Cost

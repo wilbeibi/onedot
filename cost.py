@@ -37,14 +37,21 @@ def main():
             start = today - timedelta(days=today.weekday())
             after = datetime(start.year, start.month, start.day)
         else:
-            after = datetime.fromisoformat(arg)
+            try:
+                after = datetime.fromisoformat(arg)
+            except ValueError:
+                print(f"Invalid date: {arg}")
+                return
 
     daily = defaultdict(lambda: {"input": 0, "output": 0, "calls": 0, "idle": 0, "cost": 0.0})
 
     with open(JSONL_PATH) as f:
         for line in f:
-            entry = json.loads(line)
-            ts = datetime.fromisoformat(entry["ts"])
+            try:
+                entry = json.loads(line)
+                ts = datetime.fromisoformat(entry["ts"])
+            except (json.JSONDecodeError, KeyError, ValueError):
+                continue
             if after and ts < after:
                 continue
             day = ts.date().isoformat()

@@ -32,7 +32,7 @@ local function readRecentEntries(jsonl_path, minutes)
     local entries = {}
     for line in f:lines() do
         local ok, entry = pcall(hs.json.decode, line)
-        if ok and entry and entry.ts and entry.app then
+        if ok and entry and entry.ts and entry.app and entry.event ~= "excluded" then
             local t = parseISO(entry.ts)
             if t and t >= cutoff then
                 table.insert(entries, { app = entry.app, activity = entry.activity or entry.context, switching = entry.switching, time = t })
@@ -51,14 +51,14 @@ function H.recentActivity(jsonl_path, interval, minutes)
 
     -- Group consecutive same-app entries
     local groups = {}
-    local cur = { app = entries[1].app, context = entries[1].activity, ticks = 1 }
+    local cur = { app = entries[1].app, activity = entries[1].activity, ticks = 1 }
     for i = 2, #entries do
         if entries[i].app == cur.app then
             cur.ticks = cur.ticks + 1
             if entries[i].activity then cur.activity = entries[i].activity end
         else
             table.insert(groups, cur)
-            cur = { app = entries[i].app, context = entries[i].activity, ticks = 1 }
+            cur = { app = entries[i].app, activity = entries[i].activity, ticks = 1 }
         end
     end
     table.insert(groups, cur)

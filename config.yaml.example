@@ -2,3 +2,4 @@
 api_key: GEMINI_API_KEY
 model: gemini-2.5-flash
 interval: 30
+exclude_apps: 1Password, Keychain Access, Slack
