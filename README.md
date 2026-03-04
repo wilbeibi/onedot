@@ -28,6 +28,8 @@ Everything is logged locally to `~/.config/focus-color/log.jsonl`. Each entry in
 - **Daily breakdown** — Run `uv run cost.py --today` to see your daily statistics.
 
 > **Privacy:** This tool sends full screenshots to the Gemini API for classification. Do not use it if your screen frequently displays sensitive information such as plaintext passwords, credentials, or confidential customer data.
+>
+> You can exclude sensitive apps (e.g. password managers, messaging apps) from screenshot capture by setting `exclude_apps` in your config. When an excluded app is in the foreground, focus-color skips the screenshot entirely — nothing is sent to the API.
 
 ## Installation
 
