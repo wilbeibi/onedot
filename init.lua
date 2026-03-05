@@ -113,7 +113,6 @@ local function readPauseFile()
     if not f then return nil end
     local val = f:read("*a"):gsub("%s+", "")
     f:close()
-    if val == "forever" then return "forever" end
     return tonumber(val)
 end
 
@@ -246,15 +245,16 @@ function M.start()
     local resumeAt = readPauseFile()
     if resumeAt then
         local now = os.time()
-        if resumeAt == "forever" then
-            paused = true
-            indicator.paused(menubar, COLORS.UNKNOWN)
-            menubar:setTooltip("Paused")
-        elseif resumeAt > now then
+        if resumeAt > now then
             paused = true
             local remaining = resumeAt - now
             indicator.paused(menubar, COLORS.UNKNOWN)
-            menubar:setTooltip("Paused for " .. math.ceil(remaining / 60) .. "m")
+            local mins = math.ceil(remaining / 60)
+            if mins >= 60 then
+                menubar:setTooltip("Paused for " .. math.floor(mins / 60) .. "h")
+            else
+                menubar:setTooltip("Paused for " .. mins .. "m")
+            end
             pauseTimer = hs.timer.doAfter(remaining, function() M.resume() end)
         else
             clearPauseFile()
@@ -289,15 +289,33 @@ function M.start()
         if paused then
             table.insert(items, { title = "Resume", fn = function() M.resume() end })
         else
+            -- Compute "Until this evening" (7 PM today, or nil if already past)
+            local now = os.time()
+            local tonight = os.time({
+                year = os.date("%Y", now), month = os.date("%m", now) + 0,
+                day = os.date("%d", now) + 0, hour = 19, min = 0, sec = 0,
+            })
+            local eveningMins = tonight > now and math.ceil((tonight - now) / 60) or nil
+
+            -- Compute "Until tomorrow" (9 AM next day)
+            local tomorrow9 = os.time({
+                year = os.date("%Y", now), month = os.date("%m", now) + 0,
+                day = os.date("%d", now) + 1, hour = 9, min = 0, sec = 0,
+            })
+            local tomorrowMins = math.ceil((tomorrow9 - now) / 60)
+
+            local pauseMenu = {
+                { title = "30 minutes", fn = function() M.pause(30) end },
+                { title = "1 hour",     fn = function() M.pause(60) end },
+            }
+            if eveningMins then
+                table.insert(pauseMenu, { title = "Until this evening", fn = function() M.pause(eveningMins) end })
+            end
+            table.insert(pauseMenu, { title = "Until tomorrow",    fn = function() M.pause(tomorrowMins) end })
+
             table.insert(items, {
                 title = "Pause",
-                menu = {
-                    { title = "10 minutes", fn = function() M.pause(10) end },
-                    { title = "30 minutes", fn = function() M.pause(30) end },
-                    { title = "1 hour",     fn = function() M.pause(60) end },
-                    { title = "-" },
-                    { title = "Forever",    fn = function() M.pause(nil) end },
-                },
+                menu = pauseMenu,
             })
         end
         return items
@@ -317,20 +335,24 @@ function M.pause(minutes)
     if currentTask and currentTask:isRunning() then currentTask:terminate() end
 
     -- Persist pause state to survive reloads
-    writePauseFile(minutes and (os.time() + minutes * 60) or "forever")
+    writePauseFile(os.time() + minutes * 60)
 
     -- Show paused state
     if menubar then
         indicator.paused(menubar, COLORS.UNKNOWN)
-        menubar:setTooltip(minutes and ("Paused for " .. minutes .. "m") or "Paused")
+        local label
+        if minutes >= 60 then
+            label = "Paused for " .. math.floor(minutes / 60) .. "h"
+        else
+            label = "Paused for " .. minutes .. "m"
+        end
+        menubar:setTooltip(label)
     end
 
-    if minutes then
-        pauseTimer = hs.timer.doAfter(minutes * 60, function()
-            M.resume()
-        end)
-    end
-    print("[focus-color] paused" .. (minutes and (" for " .. minutes .. "m") or ""))
+    pauseTimer = hs.timer.doAfter(minutes * 60, function()
+        M.resume()
+    end)
+    print("[focus-color] paused for " .. minutes .. "m")
 end
 
 function M.resume()
