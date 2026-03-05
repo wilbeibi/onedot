@@ -86,16 +86,16 @@ function H.switchingSummary(jsonl_path, interval, minutes)
     local entries = readRecentEntries(jsonl_path, minutes)
     if not entries then return nil end
 
-    -- Group consecutive same-app entries (like recentActivity)
+    -- Group consecutive same-activity entries
     local groups = {}
-    local cur = { app = entries[1].app, activity = entries[1].activity, ticks = 1 }
+    local cur = { text = entries[1].activity or "idle", ticks = 1 }
     for i = 2, #entries do
-        if entries[i].app == cur.app then
+        local text = entries[i].activity or "idle"
+        if text == cur.text then
             cur.ticks = cur.ticks + 1
-            if entries[i].activity then cur.activity = entries[i].activity end
         else
             table.insert(groups, cur)
-            cur = { app = entries[i].app, activity = entries[i].activity, ticks = 1 }
+            cur = { text = text, ticks = 1 }
         end
     end
     table.insert(groups, cur)
@@ -103,9 +103,8 @@ function H.switchingSummary(jsonl_path, interval, minutes)
     local lines = {}
     for _, g in ipairs(groups) do
         local dur = formatDuration(g.ticks, interval)
-        local text = g.activity or "idle"
-        local bullet = "• " .. text .. " (" .. dur .. ")"
-        table.insert(lines, utf8_trunc(bullet, 60))
+        local bullet = "• " .. g.text .. " (" .. dur .. ")"
+        table.insert(lines, bullet)
     end
     return table.concat(lines, "\n")
 end
