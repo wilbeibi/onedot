@@ -140,6 +140,7 @@ def classify(image_data, app_name, prev_activity):
             prompt_text,
         ],
         config=genai.types.GenerateContentConfig(
+            thinking_config=genai.types.ThinkingConfig(thinking_budget=0),
             media_resolution=genai.types.MediaResolution.MEDIA_RESOLUTION_MEDIUM,  # try LOW if accuracy holds
             response_mime_type="application/json",
             response_schema={
@@ -147,7 +148,7 @@ def classify(image_data, app_name, prev_activity):
                 "properties": {
                     "activity": {
                         "type": "STRING",
-                        "description": "The specific activity, without the app name. E.g. 'editing init.lua timer logic', 'reading React hooks docs', 'watching 外星人纪录片'. Max 10 words.",
+                        "description": "The specific activity, without the app name. E.g. 'editing init.lua timer logic', 'reading React hooks docs', 'watching 外星人纪录片'. Max 10 words. If the work is highly similar to the previous activity, reuse the previous activity text exactly.",
                     },
                     "key_content": {
                         "type": "STRING",
@@ -193,6 +194,7 @@ def classify(image_data, app_name, prev_activity):
 
 
 
+# DEADCODE: merge no longer called from init.lua (activity text reuse makes it redundant)
 def merge_bullets(bullets_text):
     """Send bullet points to Gemini to merge similar activities and their durations."""
     client = genai.Client(api_key=API_KEY)

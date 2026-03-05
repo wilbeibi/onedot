@@ -153,23 +153,12 @@ local function updateIndicator(category, app, reason, switching)
         local switchMinutes = SWITCH_WINDOW / 60
         local summary = history.switchingSummary(JSONL_PATH, INTERVAL, switchMinutes)
         if summary then
-            -- Write bullets to temp file, send to Gemini for merging
-            local tmpPath = "/tmp/focus-color-merge.txt"
-            local tf = io.open(tmpPath, "w")
-            if tf then tf:write(summary); tf:close() end
-            local mergeTask = hs.task.new(
-                UV_PATH,
-                function(exitCode, stdout, stderr)
-                    local merged = (exitCode == 0 and stdout and stdout:match("%S")) and stdout:gsub("%s+$", "") or summary
-                    overlay.show("Here's where you've been in the last " .. math.floor(switchMinutes) .. " min:\n\n" .. merged, function()
-                        overlaySuppressedUntil = os.time() + 300
-                        switchTimes = {}
-                    end)
-                end,
-                { "run", SCRIPT_PATH, "merge", tmpPath }
-            )
-            mergeTask:setEnvironment({ GEMINI_API_KEY = API_KEY, MODEL = MODEL })
-            mergeTask:start()
+            local bulletCount = select(2, summary:gsub("•", ""))
+            if bulletCount > SWITCH_THRESHOLD then
+                overlay.show("Here's where you've been in the last " .. math.floor(switchMinutes) .. " min:\n\n" .. summary)
+            end
+            overlaySuppressedUntil = now + 300
+            switchTimes = {}
         end
     end
 
