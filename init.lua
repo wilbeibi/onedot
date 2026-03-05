@@ -153,7 +153,7 @@ local function updateIndicator(category, app, reason, switching)
         local summary = history.switchingSummary(JSONL_PATH, INTERVAL, switchMinutes)
         if summary then
             local bulletCount = select(2, summary:gsub("•", ""))
-            if bulletCount > SWITCH_THRESHOLD then
+            if bulletCount >= SWITCH_THRESHOLD then
                 overlay.show("Here's where you've been in the last " .. math.floor(switchMinutes) .. " min:\n\n" .. summary)
             end
             overlaySuppressedUntil = now + 300
