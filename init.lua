@@ -88,7 +88,7 @@ local COLORS = {
 
 local indicator = require("focus-color.indicator")
 local history = require("focus-color.history")
-local overlay = require("focus-color.overlay")
+local snooze = require("focus-color.snooze")
 local JSONL_PATH = os.getenv("HOME") .. "/.config/focus-color/log.jsonl"
 local HISTORY_MINUTES = 60
 
@@ -154,7 +154,12 @@ local function updateIndicator(category, app, reason, switching)
         if summary then
             local bulletCount = select(2, summary:gsub("•", ""))
             if bulletCount >= SWITCH_THRESHOLD then
-                overlay.show("Here's where you've been in the last " .. math.floor(switchMinutes) .. " min:\n\n" .. summary)
+                snooze.show(
+                    "Here's where you've been in the last " .. math.floor(switchMinutes) .. " min:\n\n" .. summary,
+                    function(minutes)
+                        overlaySuppressedUntil = os.time() + minutes * 60
+                    end
+                )
             end
             overlaySuppressedUntil = now + 300
             switchTimes = {}
