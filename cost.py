@@ -6,7 +6,7 @@ import sys
 from collections import defaultdict
 from datetime import datetime, timedelta
 
-JSONL_PATH = os.path.expanduser("~/.config/focus-color/log.jsonl")
+JSONL_PATH = os.path.expanduser("~/.config/onedot/log.jsonl")
 
 # Per 1M tokens: (input, output)
 MODEL_PRICES = {

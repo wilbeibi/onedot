@@ -14,8 +14,8 @@ from google import genai
 
 API_KEY = os.environ.get("GEMINI_API_KEY", "")
 MODEL = os.environ.get("MODEL", "gemini-2.5-flash")
-STATE_PATH = "/tmp/focus-color-state.json"
-JSONL_PATH = os.path.expanduser("~/.config/focus-color/log.jsonl")
+STATE_PATH = "/tmp/onedot-state.json"
+JSONL_PATH = os.path.expanduser("~/.config/onedot/log.jsonl")
 DHASH_THRESHOLD = 6  # Hamming distance: 0=identical, 64=opposite
 PROMPT = """Classify the user's current screen activity. Do NOT just identify the application — you must READ the visible text content to determine what the user is actually doing.
 

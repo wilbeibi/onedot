@@ -1,4 +1,4 @@
-# Copy to ~/.config/focus-color/config.yaml
+# Copy to ~/.config/onedot/config.yaml
 api_key: GEMINI_API_KEY
 model: gemini-2.5-flash
 interval_secs: 30
