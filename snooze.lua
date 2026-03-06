@@ -282,7 +282,7 @@ function snooze.show(text, onSnooze)
     canvas:mouseCallback(function(_, event, _, mx, my)
         if event == "mouseDown" then
             local now = hs.timer.secondsSinceEpoch()
-            if snoozeLevel > 0 and inBar(mx, my) and (now - lastClickTime) < DBLCLICK_TIME then
+            if snoozeLevel > 0 and (now - lastClickTime) < DBLCLICK_TIME then
                 confirmNow()
                 return
             end
@@ -295,7 +295,9 @@ function snooze.show(text, onSnooze)
                 updateBar()
                 startDragTap()
             else
-                dismiss()
+                if snoozeLevel == 0 then
+                    dismiss()
+                end
             end
 
         -- mouseUp handled by eventtap (works even if released outside canvas)

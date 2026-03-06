@@ -67,6 +67,25 @@ For key_content: quote the most classification-relevant text you can read on scr
 Keep the reason under 15 words."""
 
 
+def rotate_log():
+    """If log.jsonl starts in a previous ISO week, archive it."""
+    if not os.path.exists(JSONL_PATH):
+        return
+    with open(JSONL_PATH) as f:
+        line = f.readline()
+    if not line:
+        return
+    try:
+        ts = json.loads(line).get("ts", "")
+        y, w, _ = datetime.fromisoformat(ts).date().isocalendar()
+        ny, nw, _ = datetime.now().date().isocalendar()
+        if (y, w) != (ny, nw):
+            dest = JSONL_PATH.replace("log.jsonl", f"log-{y}-W{w:02d}.jsonl")
+            os.rename(JSONL_PATH, dest)
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+
 def log_jsonl(event, result, **extra):
     """Append one JSON line per tick — classifications, idle skips, tokens, timing."""
     os.makedirs(os.path.dirname(JSONL_PATH), exist_ok=True)
@@ -214,6 +233,8 @@ def merge_bullets(bullets_text):
 
 
 def main():
+    rotate_log()
+
     if not API_KEY:
         print("ERROR: GEMINI_API_KEY not set", file=sys.stderr)
         sys.exit(1)

@@ -100,7 +100,7 @@ local function logEntry(entry)
     if lf then lf:write(hs.json.encode(entry) .. "\n"); lf:close() end
 end
 
-local PAUSE_FILE = "/tmp/focus-color-paused"
+local STATE_FILE = "/tmp/focus-color-state"
 
 local menubar = nil
 local timer = nil
@@ -108,23 +108,34 @@ local currentTask = nil
 local pauseTimer = nil
 local paused = false
 
-local function readPauseFile()
-    local f = io.open(PAUSE_FILE, "r")
-    if not f then return nil end
-    local val = f:read("*a"):gsub("%s+", "")
+local function readState()
+    local f = io.open(STATE_FILE, "r")
+    if not f then return {} end
+    local raw = f:read("*a")
     f:close()
-    return tonumber(val)
+    return hs.json.decode(raw) or {}
 end
 
-local function writePauseFile(resumeAt)
-    local f = io.open(PAUSE_FILE, "w")
+local function writeState(tbl)
+    local existing = readState()
+    for k, v in pairs(tbl) do existing[k] = v end
+    local f = io.open(STATE_FILE, "w")
     if not f then return end
-    f:write(tostring(resumeAt))
+    f:write(hs.json.encode(existing))
     f:close()
 end
 
-local function clearPauseFile()
-    os.remove(PAUSE_FILE)
+local function clearState(key)
+    if key then
+        local existing = readState()
+        existing[key] = nil
+        local f = io.open(STATE_FILE, "w")
+        if not f then return end
+        f:write(hs.json.encode(existing))
+        f:close()
+    else
+        os.remove(STATE_FILE)
+    end
 end
 
 local lastCategory = "UNKNOWN"
@@ -157,11 +168,17 @@ local function updateIndicator(category, app, reason, switching)
                 snooze.show(
                     "Here's where you've been in the last " .. math.floor(switchMinutes) .. " min:\n\n" .. summary,
                     function(minutes)
-                        overlaySuppressedUntil = os.time() + minutes * 60
+                        local until_time = os.time() + minutes * 60
+                        overlaySuppressedUntil = until_time
+                        writeState({ snoozeUntil = until_time })
+                        logEntry({
+                            event = "snooze",
+                            minutes = minutes,
+                        })
                     end
                 )
             end
-            overlaySuppressedUntil = now + 300
+            overlaySuppressedUntil = math.max(overlaySuppressedUntil, now + 300)
             switchTimes = {}
         end
     end
@@ -246,13 +263,13 @@ function M.start()
     menubar = hs.menubar.new()
     updateIndicator("UNKNOWN")
 
-    -- Restore pause state from previous session
-    local resumeAt = readPauseFile()
-    if resumeAt then
+    -- Restore state from previous session
+    local state = readState()
+    if state.pauseUntil then
         local now = os.time()
-        if resumeAt > now then
+        if state.pauseUntil > now then
             paused = true
-            local remaining = resumeAt - now
+            local remaining = state.pauseUntil - now
             indicator.paused(menubar, COLORS.UNKNOWN)
             local mins = math.ceil(remaining / 60)
             if mins >= 60 then
@@ -262,7 +279,15 @@ function M.start()
             end
             pauseTimer = hs.timer.doAfter(remaining, function() M.resume() end)
         else
-            clearPauseFile()
+            clearState("pauseUntil")
+        end
+    end
+    if state.snoozeUntil then
+        local now = os.time()
+        if state.snoozeUntil > now then
+            overlaySuppressedUntil = state.snoozeUntil
+        else
+            clearState("snoozeUntil")
         end
     end
 
@@ -340,7 +365,7 @@ function M.pause(minutes)
     if currentTask and currentTask:isRunning() then currentTask:terminate() end
 
     -- Persist pause state to survive reloads
-    writePauseFile(os.time() + minutes * 60)
+    writeState({ pauseUntil = os.time() + minutes * 60 })
 
     -- Show paused state
     if menubar then
@@ -364,7 +389,7 @@ function M.resume()
     if not paused then return end
     if pauseTimer then pauseTimer:stop(); pauseTimer = nil end
     paused = false
-    clearPauseFile()
+    clearState("pauseUntil")
     timer = hs.timer.doEvery(INTERVAL, captureAndClassify)
     captureAndClassify()
     print("[focus-color] resumed")
@@ -373,7 +398,7 @@ end
 function M.stop()
     if pauseTimer then pauseTimer:stop(); pauseTimer = nil end
     paused = false
-    clearPauseFile()
+    clearState("pauseUntil")
     indicator.stopBreathe()
     if timer then timer:stop(); timer = nil end
     if currentTask and currentTask:isRunning() then currentTask:terminate() end
