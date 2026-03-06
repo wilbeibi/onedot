@@ -155,8 +155,8 @@ def classify(image_data, app_name, prev_activity):
     response = client.models.generate_content(
         model=MODEL,
         contents=[
-            genai.types.Part.from_bytes(data=image_data, mime_type="image/png"),
             prompt_text,
+            genai.types.Part.from_bytes(data=image_data, mime_type="image/png"),
         ],
         config=genai.types.GenerateContentConfig(
             thinking_config=genai.types.ThinkingConfig(thinking_budget=0),
