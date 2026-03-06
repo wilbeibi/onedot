@@ -166,7 +166,8 @@ local function updateIndicator(category, app, reason, switching)
             local bulletCount = select(2, summary:gsub("•", ""))
             if bulletCount >= SWITCH_THRESHOLD then
                 snooze.show(
-                    "Here's where you've been in the last " .. math.floor(switchMinutes) .. " min:\n\n" .. summary,
+                    "Context switching detected\n" .. #switchTimes .. " switches in the last " .. math.floor(switchMinutes) .. " min",
+                    summary,
                     function(minutes)
                         local until_time = os.time() + minutes * 60
                         overlaySuppressedUntil = until_time
@@ -212,7 +213,8 @@ local function captureAndClassify()
     end
 
     -- Hammerspoon captures screenshot (has Screen Recording permission)
-    local screen = hs.screen.mainScreen()
+    local win = hs.window.focusedWindow()
+    local screen = win and win:screen() or hs.screen.mainScreen()
     local snapshot = screen:snapshot()
     if not snapshot then
         print("[focus-color] failed to capture screenshot")

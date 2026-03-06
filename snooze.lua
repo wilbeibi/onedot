@@ -9,14 +9,9 @@ local dragTap = nil
 local onSnoozeCallback = nil
 local snoozeLevel = 0
 local dragging = false
-local flashTimer = nil
-local lastClickTime = 0
 
 local MAX_LEVEL = 3
 local BLOCK_MINUTES = 10
-local FLASH_PAUSE = 0.3       -- delay after release before flash starts
-local FLASH_INTERVAL = 0.2    -- time between each flash step
-local DBLCLICK_TIME = 0.35    -- double-click window
 
 -- Bar layout
 local BAR_W = 200
@@ -30,13 +25,11 @@ local barX, barY = 0, 0
 local canvasX, canvasY = 0, 0
 
 local function cleanup()
-    if flashTimer then flashTimer:stop(); flashTimer = nil end
     if dragTap then dragTap:stop(); dragTap = nil end
     if escModal then escModal:exit(); escModal = nil end
     if canvas then canvas:delete(); canvas = nil end
     snoozeLevel = 0
     dragging = false
-    lastClickTime = 0
 end
 
 local function dismiss()
@@ -75,19 +68,22 @@ local function updateBar(alpha)
         })
     end
 
-    local hint = snoozeLevel == 0
-        and "drag to snooze · click outside to dismiss"
-        or "drag to adjust · double-click to confirm"
+    local hint
+    if dragging and snoozeLevel > 0 then
+        hint = "release to snooze " .. snoozeLevel * BLOCK_MINUTES .. "m"
+    elseif dragging then
+        hint = "release to cancel · drag right to snooze"
+    else
+        hint = "drag to snooze · click background or esc to dismiss"
+    end
     canvas["hint"].text = hs.styledtext.new(hint, {
         font = { name = "Menlo", size = 10 },
-        color = { white = 1, alpha = 0.35 },
+        color = { white = 1, alpha = 0.45 },
         paragraphStyle = { alignment = "center" },
     })
 end
 
--- Instant confirm (for double-click)
 local function confirmNow()
-    if flashTimer then flashTimer:stop(); flashTimer = nil end
     local minutes = snoozeLevel * BLOCK_MINUTES
     if minutes == 0 then dismiss(); return end
     local cb = onSnoozeCallback
@@ -97,31 +93,6 @@ local function confirmNow()
         cleanup()
         if cb then cb(minutes) end
     end)
-end
-
--- Progressive flash: 3 steps of increasing brightness, then confirm
-local function startFlash()
-    if flashTimer then flashTimer:stop() end
-    local step = 0
-    local alphas = { 0.65, 0.8, 1.0 }
-
-    flashTimer = hs.timer.doAfter(FLASH_PAUSE, function()
-        local function nextStep()
-            step = step + 1
-            if step > #alphas then
-                confirmNow()
-                return
-            end
-            updateBar(alphas[step])
-            flashTimer = hs.timer.doAfter(FLASH_INTERVAL, nextStep)
-        end
-        nextStep()
-    end)
-end
-
-local function stopFlash()
-    if flashTimer then flashTimer:stop(); flashTimer = nil end
-    updateBar()
 end
 
 -- Global eventtap: tracks drag even if mouse leaves canvas,
@@ -147,9 +118,11 @@ local function startDragTap()
                     dragging = false
                     stopDragTap()
                     if snoozeLevel > 0 then
-                        startFlash()
+                        confirmNow()
                     else
-                        dismiss()
+                        -- Dragged back to 0 = cancel
+                        snoozeLevel = 0
+                        updateBar()
                     end
                 end
             end
@@ -168,27 +141,43 @@ local function inBar(mx, my)
        and my >= (barY - BAR_HIT_PAD) and my <= (barY + BAR_H + BAR_HIT_PAD)
 end
 
-function snooze.show(text, onSnooze)
+function snooze.show(title, body, onSnooze)
     cleanup()
     onSnoozeCallback = onSnooze
     snoozeLevel = 0
 
-    local screen = hs.screen.mainScreen():frame()
+    local win = hs.window.focusedWindow()
+    local screen = (win and win:screen() or hs.screen.mainScreen()):frame()
     local padding = 28
     local lineHeight = 18
-    local lines = {}
-    for line in text:gmatch("[^\n]+") do
-        table.insert(lines, line)
+    local charsPerLine = 58  -- Menlo 13 in 520px - padding
+
+    -- Title height
+    local titleLines = 0
+    for line in title:gmatch("[^\n]+") do
+        local len = utf8.len(line) or #line
+        titleLines = titleLines + math.max(1, math.ceil(len / charsPerLine))
     end
-    local textH = #lines * lineHeight
+    local titleH = titleLines * 22  -- larger line height for title
+
+    -- Body height
+    local bodyLines = 0
+    for line in body:gmatch("[^\n]+") do
+        local len = utf8.len(line) or #line
+        bodyLines = bodyLines + math.max(1, math.ceil(len / charsPerLine))
+    end
+    local bodyH = bodyLines * lineHeight
+
+    local textH = titleH + 8 + bodyH  -- 8px gap between title and body
     local hintH = 14
+    local LABEL_H = 14
     local w = 520
-    local h = padding + textH + padding + BAR_H + 12 + hintH + padding / 2
+    local h = padding + textH + 16 + LABEL_H + 4 + BAR_H + 12 + hintH + padding / 2
 
     canvasX = screen.x + (screen.w - w) / 2
     canvasY = screen.y + (screen.h - h) / 2
     barX = (w - BAR_W) / 2
-    barY = padding + textH + padding
+    barY = padding + textH + 16 + LABEL_H + 4
 
     canvas = hs.canvas.new({ x = canvasX, y = canvasY, w = w, h = h })
     canvas:level(hs.canvas.windowLevels.overlay)
@@ -204,17 +193,45 @@ function snooze.show(text, onSnooze)
         action = "fill",
     })
 
-    -- Activity text
+    -- Title text (bold, larger)
     canvas:appendElements({
-        id = "text",
+        id = "title",
         type = "text",
-        frame = { x = padding, y = padding, w = w - padding * 2, h = textH },
-        text = hs.styledtext.new(text, {
-            font = { name = "Menlo", size = 13 },
+        frame = { x = padding, y = padding, w = w - padding * 2, h = titleH },
+        text = hs.styledtext.new(title, {
+            font = { name = "Menlo-Bold", size = 14 },
             color = { white = 1, alpha = 0.95 },
             paragraphStyle = { lineSpacing = 4 },
         }),
     })
+
+    -- Body text
+    canvas:appendElements({
+        id = "text",
+        type = "text",
+        frame = { x = padding, y = padding + titleH + 8, w = w - padding * 2, h = bodyH },
+        text = hs.styledtext.new(body, {
+            font = { name = "Menlo", size = 13 },
+            color = { white = 1, alpha = 0.8 },
+            paragraphStyle = { lineSpacing = 4 },
+        }),
+    })
+
+    -- Segment labels (10m, 20m, 30m) above the bar
+    local segW = BAR_W / MAX_LEVEL
+    local labelY = barY - LABEL_H - 2
+    for i = 1, MAX_LEVEL do
+        canvas:appendElements({
+            id = "seg" .. i,
+            type = "text",
+            frame = { x = barX + segW * (i - 1), y = labelY, w = segW, h = LABEL_H },
+            text = hs.styledtext.new(i * BLOCK_MINUTES .. "m", {
+                font = { name = "Menlo", size = 10 },
+                color = { white = 1, alpha = 0.4 },
+                paragraphStyle = { alignment = "center" },
+            }),
+        })
+    end
 
     -- Bar track (empty outline)
     canvas:appendElements({
@@ -222,14 +239,13 @@ function snooze.show(text, onSnooze)
         type = "rectangle",
         frame = { x = barX, y = barY, w = BAR_W, h = BAR_H },
         roundedRectRadii = { xRadius = BAR_RADIUS, yRadius = BAR_RADIUS },
-        strokeColor = { white = 1, alpha = 0.15 },
+        strokeColor = { white = 1, alpha = 0.25 },
         fillColor = { white = 0, alpha = 0 },
         action = "stroke",
         strokeWidth = 1,
     })
 
     -- Tick marks at segment boundaries
-    local segW = BAR_W / MAX_LEVEL
     for i = 1, MAX_LEVEL - 1 do
         canvas:appendElements({
             id = "tick" .. i,
@@ -238,7 +254,7 @@ function snooze.show(text, onSnooze)
                 { x = barX + segW * i, y = barY + 4 },
                 { x = barX + segW * i, y = barY + BAR_H - 4 },
             },
-            strokeColor = { white = 1, alpha = 0.1 },
+            strokeColor = { white = 1, alpha = 0.2 },
             action = "stroke",
             strokeWidth = 1,
         })
@@ -271,9 +287,9 @@ function snooze.show(text, onSnooze)
         id = "hint",
         type = "text",
         frame = { x = padding, y = barY + BAR_H + 8, w = w - padding * 2, h = hintH },
-        text = hs.styledtext.new("drag to snooze · click outside to dismiss", {
+        text = hs.styledtext.new("drag to snooze · click background or esc to dismiss", {
             font = { name = "Menlo", size = 10 },
-            color = { white = 1, alpha = 0.35 },
+            color = { white = 1, alpha = 0.45 },
             paragraphStyle = { alignment = "center" },
         }),
     })
@@ -281,26 +297,14 @@ function snooze.show(text, onSnooze)
     -- Canvas handles mouseDown and mouseUp; drag tracked via eventtap
     canvas:mouseCallback(function(_, event, _, mx, my)
         if event == "mouseDown" then
-            local now = hs.timer.secondsSinceEpoch()
-            if snoozeLevel > 0 and (now - lastClickTime) < DBLCLICK_TIME then
-                confirmNow()
-                return
-            end
-            lastClickTime = now
-
             if inBar(mx, my) then
                 dragging = true
-                stopFlash()
-                snoozeLevel = math.max(1, snapLevel(mx))
+                snoozeLevel = snapLevel(mx)
                 updateBar()
                 startDragTap()
             else
-                if snoozeLevel == 0 then
-                    dismiss()
-                end
+                dismiss()
             end
-
-        -- mouseUp handled by eventtap (works even if released outside canvas)
         end
     end)
     canvas:canvasMouseEvents(true, false, false, false)

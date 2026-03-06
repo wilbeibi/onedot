@@ -21,7 +21,8 @@ function overlay.show(text, onDismiss)
     dismiss()
     onDismissCallback = onDismiss
 
-    local screen = hs.screen.mainScreen():frame()
+    local win = hs.window.focusedWindow()
+    local screen = (win and win:screen() or hs.screen.mainScreen()):frame()
     local padding = 28
     local lineHeight = 18
     local charsPerLine = 58  -- Menlo 13 in 520px - padding
