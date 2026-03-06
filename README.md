@@ -19,6 +19,10 @@ Hammerspoon takes a screenshot at your configured interval. The AI reads the vis
 | Blue | **INPUT** | Reading documentation, watching a technical talk, studying code |
 | Orange | **DISTRACTED** | Browsing social media, configuring tools, idle screen |
 
+## Context-Switch Nudge
+
+When the AI detects you've drifted to a different activity — say, from coding to browsing Reddit — a centered overlay pops up showing what you switched away from. Drag the snooze bar to suppress it for 10–30 minutes if the switch was intentional.
+
 ## Data and Logging
 
 Everything is logged locally to `~/.config/focus-color/log.jsonl`. Each entry includes the timestamp, active app, visible text snippet, classification, and confidence score.
@@ -60,7 +64,7 @@ Everything is logged locally to `~/.config/focus-color/log.jsonl`. Each entry in
 ```yaml
 api_key: your-gemini-api-key
 model: gemini-2.5-flash   # any Gemini model
-interval: 30               # seconds between screen checks
+interval_secs: 30          # seconds between screen checks
 exclude_apps: 1Password, Keychain Access, Slack  # optional, comma-separated app names
 ```
 

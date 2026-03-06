@@ -60,7 +60,7 @@ if not UV_PATH then
 end
 
 local MODEL = config.model or "gemini-2.5-flash"
-local INTERVAL = tonumber(config.interval) or 30
+local INTERVAL = tonumber(config.interval_secs) or 30
 
 local function parseAppList(raw)
     local set = {}
