@@ -14,8 +14,8 @@ from google import genai
 
 API_KEY = os.environ.get("GEMINI_API_KEY", "")
 MODEL = os.environ.get("MODEL", "gemini-2.5-flash")
-STATE_PATH = "/tmp/focus-color-state.json"
-JSONL_PATH = os.path.expanduser("~/.config/focus-color/log.jsonl")
+STATE_PATH = "/tmp/onedot-state.json"
+JSONL_PATH = os.path.expanduser("~/.config/onedot/log.jsonl")
 DHASH_THRESHOLD = 6  # Hamming distance: 0=identical, 64=opposite
 PROMPT = """Classify the user's current screen activity. Do NOT just identify the application — you must READ the visible text content to determine what the user is actually doing.
 
@@ -65,6 +65,25 @@ Examples:
 For key_content: quote the most classification-relevant text you can read on screen (a code snippet, conversation message, article title, video title, or terminal command). Max 40 words. This is critical for accurate classification.
 
 Keep the reason under 15 words."""
+
+
+def rotate_log():
+    """If log.jsonl starts in a previous ISO week, archive it."""
+    if not os.path.exists(JSONL_PATH):
+        return
+    with open(JSONL_PATH) as f:
+        line = f.readline()
+    if not line:
+        return
+    try:
+        ts = json.loads(line).get("ts", "")
+        y, w, _ = datetime.fromisoformat(ts).date().isocalendar()
+        ny, nw, _ = datetime.now().date().isocalendar()
+        if (y, w) != (ny, nw):
+            dest = JSONL_PATH.replace("log.jsonl", f"log-{y}-W{w:02d}.jsonl")
+            os.rename(JSONL_PATH, dest)
+    except (json.JSONDecodeError, ValueError):
+        pass
 
 
 def log_jsonl(event, result, **extra):
@@ -136,8 +155,8 @@ def classify(image_data, app_name, prev_activity):
     response = client.models.generate_content(
         model=MODEL,
         contents=[
-            genai.types.Part.from_bytes(data=image_data, mime_type="image/png"),
             prompt_text,
+            genai.types.Part.from_bytes(data=image_data, mime_type="image/png"),
         ],
         config=genai.types.GenerateContentConfig(
             thinking_config=genai.types.ThinkingConfig(thinking_budget=0),
@@ -214,6 +233,8 @@ def merge_bullets(bullets_text):
 
 
 def main():
+    rotate_log()
+
     if not API_KEY:
         print("ERROR: GEMINI_API_KEY not set", file=sys.stderr)
         sys.exit(1)

@@ -21,14 +21,17 @@ function overlay.show(text, onDismiss)
     dismiss()
     onDismissCallback = onDismiss
 
-    local screen = hs.screen.mainScreen():frame()
+    local win = hs.window.focusedWindow()
+    local screen = (win and win:screen() or hs.screen.mainScreen()):frame()
     local padding = 28
     local lineHeight = 18
-    local lines = {}
+    local charsPerLine = 58  -- Menlo 13 in 520px - padding
+    local visualLines = 0
     for line in text:gmatch("[^\n]+") do
-        table.insert(lines, line)
+        local len = utf8.len(line) or #line
+        visualLines = visualLines + math.max(1, math.ceil(len / charsPerLine))
     end
-    local textH = #lines * lineHeight
+    local textH = visualLines * lineHeight
     local hintH = 14
     local w = 520
     local h = padding + textH + padding + hintH + padding / 2
@@ -45,7 +48,7 @@ function overlay.show(text, onDismiss)
         type = "rectangle",
         frame = { x = 0, y = 0, w = w, h = h },
         roundedRectRadii = { xRadius = 12, yRadius = 12 },
-        fillColor = { red = 0.1, green = 0.1, blue = 0.1, alpha = 0.85 },
+        fillColor = { red = 0.1, green = 0.1, blue = 0.1, alpha = 0.70 },
         action = "fill",
     })
 

@@ -20,8 +20,8 @@ end
 
 local UV_PATH = findUv()
 local SCRIPT_PATH = BASE_DIR .. "classify.py"
-local CONFIG_PATH = os.getenv("HOME") .. "/.config/focus-color/config.yaml"
-local SCREENSHOT_PATH = "/tmp/focus-color.png"
+local CONFIG_PATH = os.getenv("HOME") .. "/.config/onedot/config.yaml"
+local SCREENSHOT_PATH = "/tmp/onedot.png"
 
 -- Parse simple YAML (key: value, one per line)
 local function loadConfig()
@@ -44,23 +44,23 @@ end
 
 local config = loadConfig()
 if not config then
-    hs.alert.show("focus-color: ~/.config/focus-color/config.yaml not found.\nCopy config.yaml.example there and add your Gemini API key.")
+    hs.alert.show("onedot: ~/.config/onedot/config.yaml not found.\nCopy config.yaml.example there and add your Gemini API key.")
     return M
 end
 
 local API_KEY = config.api_key or ""
 if API_KEY == "" then
-    hs.alert.show("focus-color: Set api_key in ~/.config/focus-color/config.yaml")
+    hs.alert.show("onedot: Set api_key in ~/.config/onedot/config.yaml")
     return M
 end
 
 if not UV_PATH then
-    hs.alert.show("focus-color: 'uv' not found.\nInstall it: curl -LsSf https://astral.sh/uv/install.sh | sh")
+    hs.alert.show("onedot: 'uv' not found.\nInstall it: curl -LsSf https://astral.sh/uv/install.sh | sh")
     return M
 end
 
 local MODEL = config.model or "gemini-2.5-flash"
-local INTERVAL = tonumber(config.interval) or 30
+local INTERVAL = tonumber(config.interval_secs) or 30
 
 local function parseAppList(raw)
     local set = {}
@@ -86,10 +86,10 @@ local COLORS = {
     SWITCHING  = { red = 0.83, green = 0.63, blue = 0.19 }, -- #D4A030 muted amber: context transition ring
 }
 
-local indicator = require("focus-color.indicator")
-local history = require("focus-color.history")
-local overlay = require("focus-color.overlay")
-local JSONL_PATH = os.getenv("HOME") .. "/.config/focus-color/log.jsonl"
+local indicator = require("onedot.indicator")
+local history = require("onedot.history")
+local snooze = require("onedot.snooze")
+local JSONL_PATH = os.getenv("HOME") .. "/.config/onedot/log.jsonl"
 local HISTORY_MINUTES = 60
 
 -- Append a JSONL log entry (mirrors classify.py's log_jsonl format)
@@ -100,7 +100,7 @@ local function logEntry(entry)
     if lf then lf:write(hs.json.encode(entry) .. "\n"); lf:close() end
 end
 
-local PAUSE_FILE = "/tmp/focus-color-paused"
+local STATE_FILE = "/tmp/onedot-state"
 
 local menubar = nil
 local timer = nil
@@ -108,23 +108,34 @@ local currentTask = nil
 local pauseTimer = nil
 local paused = false
 
-local function readPauseFile()
-    local f = io.open(PAUSE_FILE, "r")
-    if not f then return nil end
-    local val = f:read("*a"):gsub("%s+", "")
+local function readState()
+    local f = io.open(STATE_FILE, "r")
+    if not f then return {} end
+    local raw = f:read("*a")
     f:close()
-    return tonumber(val)
+    return hs.json.decode(raw) or {}
 end
 
-local function writePauseFile(resumeAt)
-    local f = io.open(PAUSE_FILE, "w")
+local function writeState(tbl)
+    local existing = readState()
+    for k, v in pairs(tbl) do existing[k] = v end
+    local f = io.open(STATE_FILE, "w")
     if not f then return end
-    f:write(tostring(resumeAt))
+    f:write(hs.json.encode(existing))
     f:close()
 end
 
-local function clearPauseFile()
-    os.remove(PAUSE_FILE)
+local function clearState(key)
+    if key then
+        local existing = readState()
+        existing[key] = nil
+        local f = io.open(STATE_FILE, "w")
+        if not f then return end
+        f:write(hs.json.encode(existing))
+        f:close()
+    else
+        os.remove(STATE_FILE)
+    end
 end
 
 local lastCategory = "UNKNOWN"
@@ -153,10 +164,22 @@ local function updateIndicator(category, app, reason, switching)
         local summary = history.switchingSummary(JSONL_PATH, INTERVAL, switchMinutes)
         if summary then
             local bulletCount = select(2, summary:gsub("•", ""))
-            if bulletCount > SWITCH_THRESHOLD then
-                overlay.show("Here's where you've been in the last " .. math.floor(switchMinutes) .. " min:\n\n" .. summary)
+            if bulletCount >= SWITCH_THRESHOLD then
+                snooze.show(
+                    "Here's your last " .. math.floor(switchMinutes) .. " minutes",
+                    summary,
+                    function(minutes)
+                        local until_time = os.time() + minutes * 60
+                        overlaySuppressedUntil = until_time
+                        writeState({ snoozeUntil = until_time })
+                        logEntry({
+                            event = "snooze",
+                            minutes = minutes,
+                        })
+                    end
+                )
             end
-            overlaySuppressedUntil = now + 300
+            overlaySuppressedUntil = math.max(overlaySuppressedUntil, now + 300)
             switchTimes = {}
         end
     end
@@ -190,10 +213,11 @@ local function captureAndClassify()
     end
 
     -- Hammerspoon captures screenshot (has Screen Recording permission)
-    local screen = hs.screen.mainScreen()
+    local win = hs.window.focusedWindow()
+    local screen = win and win:screen() or hs.screen.mainScreen()
     local snapshot = screen:snapshot()
     if not snapshot then
-        print("[focus-color] failed to capture screenshot")
+        print("[onedot] failed to capture screenshot")
         return
     end
     -- Downscale for faster upload to Gemini (Retina screenshots are unnecessarily large)
@@ -219,12 +243,12 @@ local function captureAndClassify()
                         end
                         updateIndicator(result.category, display, result.reason, result.switching)
                     else
-                        print("[focus-color] unknown category: " .. tostring(result.category))
+                        print("[onedot] unknown category: " .. tostring(result.category))
                         updateIndicator("UNKNOWN", appName, "Unknown category: " .. tostring(result.category), false)
                     end
                 end
             else
-                print("[focus-color] error: " .. (stderr or "unknown"))
+                print("[onedot] error: " .. (stderr or "unknown"))
                 updateIndicator("ERROR", nil, "Classification failed", nil)
             end
             currentTask = nil
@@ -241,13 +265,13 @@ function M.start()
     menubar = hs.menubar.new()
     updateIndicator("UNKNOWN")
 
-    -- Restore pause state from previous session
-    local resumeAt = readPauseFile()
-    if resumeAt then
+    -- Restore state from previous session
+    local state = readState()
+    if state.pauseUntil then
         local now = os.time()
-        if resumeAt > now then
+        if state.pauseUntil > now then
             paused = true
-            local remaining = resumeAt - now
+            local remaining = state.pauseUntil - now
             indicator.paused(menubar, COLORS.UNKNOWN)
             local mins = math.ceil(remaining / 60)
             if mins >= 60 then
@@ -257,7 +281,15 @@ function M.start()
             end
             pauseTimer = hs.timer.doAfter(remaining, function() M.resume() end)
         else
-            clearPauseFile()
+            clearState("pauseUntil")
+        end
+    end
+    if state.snoozeUntil then
+        local now = os.time()
+        if state.snoozeUntil > now then
+            overlaySuppressedUntil = state.snoozeUntil
+        else
+            clearState("snoozeUntil")
         end
     end
 
@@ -325,7 +357,7 @@ function M.start()
         timer = hs.timer.doEvery(INTERVAL, captureAndClassify)
         captureAndClassify()
     end
-    print("[focus-color] started" .. (paused and " (paused)" or ""))
+    print("[onedot] started" .. (paused and " (paused)" or ""))
 end
 
 function M.pause(minutes)
@@ -335,7 +367,7 @@ function M.pause(minutes)
     if currentTask and currentTask:isRunning() then currentTask:terminate() end
 
     -- Persist pause state to survive reloads
-    writePauseFile(os.time() + minutes * 60)
+    writeState({ pauseUntil = os.time() + minutes * 60 })
 
     -- Show paused state
     if menubar then
@@ -352,28 +384,28 @@ function M.pause(minutes)
     pauseTimer = hs.timer.doAfter(minutes * 60, function()
         M.resume()
     end)
-    print("[focus-color] paused for " .. minutes .. "m")
+    print("[onedot] paused for " .. minutes .. "m")
 end
 
 function M.resume()
     if not paused then return end
     if pauseTimer then pauseTimer:stop(); pauseTimer = nil end
     paused = false
-    clearPauseFile()
+    clearState("pauseUntil")
     timer = hs.timer.doEvery(INTERVAL, captureAndClassify)
     captureAndClassify()
-    print("[focus-color] resumed")
+    print("[onedot] resumed")
 end
 
 function M.stop()
     if pauseTimer then pauseTimer:stop(); pauseTimer = nil end
     paused = false
-    clearPauseFile()
+    clearState("pauseUntil")
     indicator.stopBreathe()
     if timer then timer:stop(); timer = nil end
     if currentTask and currentTask:isRunning() then currentTask:terminate() end
     if menubar then menubar:delete(); menubar = nil end
-    print("[focus-color] stopped")
+    print("[onedot] stopped")
 end
 
 M.start()
