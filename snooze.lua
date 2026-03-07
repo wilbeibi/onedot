@@ -1,6 +1,3 @@
--- snooze.lua — lever-style snooze overlay for context-switch popup
--- Self-contained: delete this file and revert snooze.show() in init.lua to remove.
-
 local snooze = {}
 
 local canvas = nil
@@ -13,17 +10,15 @@ local dragging = false
 local MAX_LEVEL = 3
 local BLOCK_MINUTES = 10
 
--- Bar layout
 local BAR_W = 300
 local BAR_H = 20
 local BAR_RADIUS = 6
-local BAR_HIT_PAD = 12        -- extra px around bar for hit testing
+local BAR_HIT_PAD = 12        -- forgiving touch target around thin bar
 local THUMB_W = 6
 local THUMB_H = 14
 
--- Canvas-local bar geometry (set during show())
 local barX, barY = 0, 0
--- Canvas absolute origin (for converting global mouse coords to local)
+-- eventtap gives global coords; we subtract canvas origin to get local
 local canvasX, canvasY = 0, 0
 
 local function cleanup()
@@ -39,14 +34,12 @@ local function dismiss()
     onSnoozeCallback = nil
 end
 
--- Map canvas-local X to nearest snap level (0..MAX_LEVEL)
 local function snapLevel(localX)
     local rel = (localX - barX) / BAR_W
     rel = math.max(0, math.min(1, rel))
     return math.floor(rel * MAX_LEVEL + 0.5)
 end
 
--- Redraw fill bar, thumb, label, and hint for current snoozeLevel
 local function updateBar(alpha)
     if not canvas then return end
     alpha = alpha or 0.55
@@ -55,7 +48,6 @@ local function updateBar(alpha)
     canvas["fill"].frame = { x = barX, y = barY, w = math.max(0, fillW), h = BAR_H }
     canvas["fill"].fillColor = { white = 1, alpha = snoozeLevel > 0 and alpha or 0 }
 
-    -- Thumb handle position
     local thumbX = barX + fillW - THUMB_W / 2
     if snoozeLevel == 0 then thumbX = barX + 2 end
     canvas["thumb"].frame = {
@@ -64,7 +56,6 @@ local function updateBar(alpha)
     }
     canvas["thumb"].fillColor = { white = 1, alpha = dragging and 0.9 or 0.5 }
 
-    -- Bar label: user's voice
     local barText
     if snoozeLevel > 0 then
         barText = "Give me " .. snoozeLevel * BLOCK_MINUTES .. "m"
@@ -91,8 +82,7 @@ local function confirmNow()
     end)
 end
 
--- Global eventtap: tracks drag even if mouse leaves canvas,
--- and catches mouseUp outside canvas to finalize the interaction
+-- Canvas mouse callbacks stop at canvas edges; global eventtap keeps drag working
 local function startDragTap()
     if dragTap then dragTap:stop() end
     dragTap = hs.eventtap.new(
@@ -116,7 +106,6 @@ local function startDragTap()
                     if snoozeLevel > 0 then
                         confirmNow()
                     else
-                        -- Dragged back to 0 = cancel
                         snoozeLevel = 0
                         updateBar()
                     end
@@ -147,17 +136,16 @@ function snooze.show(title, body, onSnooze)
     local padding = 28
     local lineHeight = 18
     local w = 520
-    local charsPerLine = 58  -- Menlo 13 in 520px - padding
+    local charsPerLine = 58  -- measured for Menlo 13pt in 520px canvas
 
-    -- Title height (system font, 15pt)
     local titleLines = 0
     for line in title:gmatch("[^\n]+") do
         local len = utf8.len(line) or #line
         titleLines = titleLines + math.max(1, math.ceil(len / charsPerLine))
     end
-    local titleH = titleLines * 24  -- larger line height for title
+    local titleH = titleLines * 24
 
-    -- Truncate body lines and compute height
+    -- hs.canvas text elements don't wrap, so we truncate manually
     local truncatedBody = {}
     for line in body:gmatch("[^\n]+") do
         local len = utf8.len(line) or #line
@@ -171,7 +159,7 @@ function snooze.show(title, body, onSnooze)
     local bodyLines = #truncatedBody
     local bodyH = bodyLines * lineHeight
 
-    local textH = titleH + 8 + bodyH  -- 8px gap between title and body
+    local textH = titleH + 8 + bodyH
     local hintH = 14
     local LABEL_H = 14
     local h = padding + textH + 16 + LABEL_H + 4 + BAR_H + 12 + hintH + padding / 2
@@ -185,7 +173,6 @@ function snooze.show(title, body, onSnooze)
     canvas:level(hs.canvas.windowLevels.overlay)
     canvas:behaviorAsLabels({ "canJoinAllSpaces", "stationary" })
 
-    -- Background
     canvas:appendElements({
         id = "bg",
         type = "rectangle",
@@ -195,7 +182,6 @@ function snooze.show(title, body, onSnooze)
         action = "fill",
     })
 
-    -- Title text (system font, bold, 15pt)
     canvas:appendElements({
         id = "title",
         type = "text",
@@ -207,7 +193,6 @@ function snooze.show(title, body, onSnooze)
         }),
     })
 
-    -- Body text (Menlo for alignment)
     canvas:appendElements({
         id = "text",
         type = "text",
@@ -219,7 +204,6 @@ function snooze.show(title, body, onSnooze)
         }),
     })
 
-    -- Segment labels (10m, 20m, 30m) above the bar
     local segW = BAR_W / MAX_LEVEL
     local labelY = barY - LABEL_H - 2
     for i = 1, MAX_LEVEL do
@@ -235,7 +219,6 @@ function snooze.show(title, body, onSnooze)
         })
     end
 
-    -- Bar track (empty outline)
     canvas:appendElements({
         id = "track",
         type = "rectangle",
@@ -247,7 +230,6 @@ function snooze.show(title, body, onSnooze)
         strokeWidth = 1,
     })
 
-    -- Tick marks at segment boundaries
     for i = 1, MAX_LEVEL - 1 do
         canvas:appendElements({
             id = "tick" .. i,
@@ -262,7 +244,6 @@ function snooze.show(title, body, onSnooze)
         })
     end
 
-    -- Bar fill
     canvas:appendElements({
         id = "fill",
         type = "rectangle",
@@ -272,7 +253,6 @@ function snooze.show(title, body, onSnooze)
         action = "fill",
     })
 
-    -- Thumb handle (draggable indicator at left edge)
     canvas:appendElements({
         id = "thumb",
         type = "rectangle",
@@ -282,7 +262,6 @@ function snooze.show(title, body, onSnooze)
         action = "fill",
     })
 
-    -- Bar label (user's voice: "not now →" / "Give me 10m")
     canvas:appendElements({
         id = "label",
         type = "text",
@@ -294,7 +273,6 @@ function snooze.show(title, body, onSnooze)
         }),
     })
 
-    -- Hint text (system font)
     canvas:appendElements({
         id = "hint",
         type = "text",
@@ -306,8 +284,6 @@ function snooze.show(title, body, onSnooze)
         }),
     })
 
-    -- Canvas handles mouseDown; drag tracked via global eventtap
-    -- Click on bar starts drag; click anywhere else dismisses
     canvas:mouseCallback(function(_, event, _, mx, my)
         if event == "mouseDown" then
             if inBar(mx, my) then
@@ -323,7 +299,6 @@ function snooze.show(title, body, onSnooze)
 
     canvas:show()
 
-    -- Escape to dismiss
     escModal = hs.hotkey.modal.new()
     escModal:bind("", "escape", function() dismiss() end)
     escModal:enter()

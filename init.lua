@@ -1,9 +1,7 @@
 local M = {}
 
--- Derive BASE_DIR from this script's location (works regardless of where it's cloned)
 local BASE_DIR = debug.getinfo(1, "S").source:match("@(.*/)")
 
--- Find uv: try PATH first, then common install locations
 local function findUv()
     local output, ok = hs.execute("which uv")
     if ok and output then
@@ -23,7 +21,7 @@ local SCRIPT_PATH = BASE_DIR .. "classify.py"
 local CONFIG_PATH = os.getenv("HOME") .. "/.config/onedot/config.yaml"
 local SCREENSHOT_PATH = "/tmp/onedot.png"
 
--- Parse simple YAML (key: value, one per line)
+-- No YAML library in Hammerspoon; this handles our flat key:value config
 local function loadConfig()
     local config = {}
     local f = io.open(CONFIG_PATH, "r")
@@ -32,8 +30,8 @@ local function loadConfig()
         if not line:match("^#") and line:match(":") then
             local key, val = line:match("^(%S+):%s*(.+)$")
             if key and val then
-                val = val:gsub("%s+#.*$", "")   -- strip inline comments
-                val = val:match('^"(.*)"$') or val:match("^'(.*)'$") or val  -- strip quotes
+                val = val:gsub("%s+#.*$", "")
+                val = val:match('^"(.*)"$') or val:match("^'(.*)'$") or val
                 config[key] = val
             end
         end
@@ -76,14 +74,14 @@ end
 
 local EXCLUDED_APPS = parseAppList(config.exclude_apps)
 
--- Desaturated palette — see docs/color-psychology-research.md for rationale
+-- Desaturated to avoid menubar dot feeling urgent/distracting
 local COLORS = {
-    OUTPUT     = { red = 0.24, green = 0.65, blue = 0.42 }, -- #3DA66A emerald green: productive creation
-    INPUT      = { red = 0.36, green = 0.64, blue = 0.85 }, -- #5BA4D9 steel blue: calm absorption
-    DISTRACTED = { red = 0.83, green = 0.41, blue = 0.23 }, -- #D4693A burnt orange: attention warning
-    UNKNOWN    = { red = 0.48, green = 0.48, blue = 0.50 }, -- #7A7A80 cool gray: neutral/starting
-    ERROR      = { red = 0.55, green = 0.23, blue = 0.23 }, -- #8C3A3A muted red: visible but not alarming
-    SWITCHING  = { red = 0.83, green = 0.63, blue = 0.19 }, -- #D4A030 muted amber: context transition ring
+    OUTPUT     = { red = 0.24, green = 0.65, blue = 0.42 }, -- muted green
+    INPUT      = { red = 0.36, green = 0.64, blue = 0.85 }, -- muted blue
+    DISTRACTED = { red = 0.83, green = 0.41, blue = 0.23 }, -- burnt orange
+    UNKNOWN    = { red = 0.48, green = 0.48, blue = 0.50 }, -- neutral gray
+    ERROR      = { red = 0.55, green = 0.23, blue = 0.23 }, -- muted red
+    SWITCHING  = { red = 0.83, green = 0.63, blue = 0.19 }, -- amber
 }
 
 local indicator = require("onedot.indicator")
@@ -92,7 +90,6 @@ local snooze = require("onedot.snooze")
 local JSONL_PATH = os.getenv("HOME") .. "/.config/onedot/log.jsonl"
 local HISTORY_MINUTES = 60
 
--- Append a JSONL log entry (mirrors classify.py's log_jsonl format)
 local function logEntry(entry)
     entry.ts = entry.ts or os.date("%Y-%m-%dT%H:%M:%S")
     entry.model = entry.model or MODEL
@@ -143,8 +140,8 @@ local lastReason = ""
 local lastApp = ""
 local switchTimes = {}
 local overlaySuppressedUntil = 0
-local SWITCH_WINDOW = 600    -- look at last 10 minutes
-local SWITCH_THRESHOLD = 5   -- popup after 5 switches within the window
+local SWITCH_WINDOW = 600
+local SWITCH_THRESHOLD = 5
 
 local function updateIndicator(category, app, reason, switching)
     if not menubar then return end
@@ -153,7 +150,6 @@ local function updateIndicator(category, app, reason, switching)
     if switching then
         table.insert(switchTimes, now)
     end
-    -- Prune old timestamps outside the window
     local cutoff = now - SWITCH_WINDOW
     while #switchTimes > 0 and switchTimes[1] < cutoff do
         table.remove(switchTimes, 1)
@@ -202,7 +198,7 @@ end
 local function captureAndClassify()
     if currentTask and currentTask:isRunning() then return end
 
-    -- Get frontmost app name from the OS (stable, no AI guessing)
+    -- OS-level app name is reliable; don't let the AI guess from screenshot
     local frontApp = hs.application.frontmostApplication()
     local appName = frontApp and frontApp:name() or "Unknown"
 
@@ -212,7 +208,6 @@ local function captureAndClassify()
         return
     end
 
-    -- Hammerspoon captures screenshot (has Screen Recording permission)
     local win = hs.window.focusedWindow()
     local screen = win and win:screen() or hs.screen.mainScreen()
     local snapshot = screen:snapshot()
@@ -220,7 +215,7 @@ local function captureAndClassify()
         print("[onedot] failed to capture screenshot")
         return
     end
-    -- Downscale for faster upload to Gemini (Retina screenshots are unnecessarily large)
+    -- Retina screenshots are 2x+ larger than needed for classification
     local size = snapshot:size()
     local MAX_W = 1536
     if size.w > MAX_W then
@@ -229,7 +224,6 @@ local function captureAndClassify()
     end
     snapshot:saveToFile(SCREENSHOT_PATH)
 
-    -- Spawn Python to classify the screenshot
     currentTask = hs.task.new(
         UV_PATH,
         function(exitCode, stdout, stderr)
@@ -265,7 +259,7 @@ function M.start()
     menubar = hs.menubar.new()
     updateIndicator("UNKNOWN")
 
-    -- Restore state from previous session
+    -- Survive Hammerspoon reloads: restore pause/snooze timers
     local state = readState()
     if state.pauseUntil then
         local now = os.time()
@@ -296,7 +290,7 @@ function M.start()
     menubar:setMenu(function()
         local items = {}
         if lastReason ~= "" then
-            -- Word-wrap reason into ~40-char lines (UTF-8-aware)
+            -- Menubar menu items don't wrap, so we break manually
             local line = ""
             for word in lastReason:gmatch("%S+") do
                 local lineLen = utf8.len(line) or #line
@@ -321,7 +315,6 @@ function M.start()
         if paused then
             table.insert(items, { title = "Resume", fn = function() M.resume() end })
         else
-            -- Compute "Until this evening" (7 PM today, or nil if already past)
             local now = os.time()
             local tonight = os.time({
                 year = os.date("%Y", now), month = os.date("%m", now) + 0,
@@ -329,7 +322,6 @@ function M.start()
             })
             local eveningMins = tonight > now and math.ceil((tonight - now) / 60) or nil
 
-            -- Compute "Until tomorrow" (9 AM next day)
             local tomorrow9 = os.time({
                 year = os.date("%Y", now), month = os.date("%m", now) + 0,
                 day = os.date("%d", now) + 1, hour = 9, min = 0, sec = 0,
@@ -366,10 +358,8 @@ function M.pause(minutes)
     timer:stop()
     if currentTask and currentTask:isRunning() then currentTask:terminate() end
 
-    -- Persist pause state to survive reloads
     writeState({ pauseUntil = os.time() + minutes * 60 })
 
-    -- Show paused state
     if menubar then
         indicator.paused(menubar, COLORS.UNKNOWN)
         local label

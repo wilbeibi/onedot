@@ -16,7 +16,7 @@ API_KEY = os.environ.get("GEMINI_API_KEY", "")
 MODEL = os.environ.get("MODEL", "gemini-2.5-flash")
 STATE_PATH = "/tmp/onedot-state.json"
 JSONL_PATH = os.path.expanduser("~/.config/onedot/log.jsonl")
-DHASH_THRESHOLD = 6  # Hamming distance: 0=identical, 64=opposite
+DHASH_THRESHOLD = 6  # below this = "same screen" (0=identical, 64=opposite)
 PROMPT = """Classify the user's current screen activity. Do NOT just identify the application — you must READ the visible text content to determine what the user is actually doing.
 
 Step 1: Read the title bar, tab titles, and URL bar to identify the foreground app.
@@ -150,7 +150,7 @@ def classify(image_data, app_name, prev_activity):
         ],
         config=genai.types.GenerateContentConfig(
             thinking_config=genai.types.ThinkingConfig(thinking_budget=0),
-            media_resolution=genai.types.MediaResolution.MEDIA_RESOLUTION_MEDIUM,  # try LOW if accuracy holds
+            media_resolution=genai.types.MediaResolution.MEDIA_RESOLUTION_MEDIUM,
             response_mime_type="application/json",
             response_schema={
                 "type": "OBJECT",
@@ -187,7 +187,7 @@ def classify(image_data, app_name, prev_activity):
     )
 
     result = json.loads(response.text)
-    # Gemini structured output bugs: literal \uXXXX escapes and control chars in strings
+    # Gemini sometimes returns literal \uXXXX instead of actual unicode chars
     for k, v in result.items():
         if isinstance(v, str):
             if "\\u" in v:
@@ -226,27 +226,25 @@ def main():
         print(f"ERROR: image not found: {image_path}", file=sys.stderr)
         sys.exit(1)
 
-    # --- Read screenshot once, reuse everywhere ---
     with open(image_path, "rb") as f:
         image_data = f.read()
 
-    # --- Idle detection (two-tier) ---
+    # Two-tier idle detection avoids wasting API calls on unchanged screens
     state = load_state()
     current_file_hash = file_hash(image_data)
 
-    # Tier 1: exact file match — no image processing, no Pillow import
+    # Exact match is cheap (no Pillow import needed)
     if state and current_file_hash == state.get("file_hash"):
         emit_idle("idle_exact", state, app_name, state.get("dhash", 0), current_file_hash)
         return
 
-    # Tier 2: perceptual similarity via dHash — catches clock/cursor changes
+    # Perceptual hash catches near-identical screens (clock tick, cursor blink)
     current_dhash = dhash(image_data)
     if state and hamming(current_dhash, state.get("dhash", 0)) < DHASH_THRESHOLD:
         emit_idle("idle_dhash", state, app_name, current_dhash, current_file_hash,
                   hamming=hamming(current_dhash, state["dhash"]))
         return
 
-    # --- Screen changed: classify with Gemini ---
     prev_activity = state.get("last_result", {}).get("activity") if state else None
     result = classify(image_data, app_name, prev_activity)
     save_state(current_dhash, current_file_hash, result)

@@ -1,5 +1,3 @@
--- indicator.lua — menubar dot rendering with breathing animation for DISTRACTED state
-
 local indicator = {}
 
 local breatheTimer = nil
@@ -13,8 +11,7 @@ local function draw(menubar, color, switchingColor, alpha)
     if switchingColor then
         local sc = { red = switchingColor.red, green = switchingColor.green, blue = switchingColor.blue, alpha = alpha }
         local cx, cy, r = 11, 11, 6
-        -- Split dot: left half = category color, right half = switching amber
-        -- Split dot: left half = category color, right half = switching amber
+        -- Two-tone dot: category + switching color at a glance
         local function semicircle(startAngle, sweep)
             local pts = {}
             local steps = 20
@@ -24,7 +21,6 @@ local function draw(menubar, color, switchingColor, alpha)
             end
             return pts
         end
-        -- Left semicircle (category)
         canvas:appendElements({
             type = "segments",
             closed = true,
@@ -32,7 +28,6 @@ local function draw(menubar, color, switchingColor, alpha)
             fillColor = c,
             coordinates = semicircle(-math.pi/2, -math.pi),
         })
-        -- Right semicircle (switching)
         canvas:appendElements({
             type = "segments",
             closed = true,
