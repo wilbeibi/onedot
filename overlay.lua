@@ -48,7 +48,7 @@ function overlay.show(text, onDismiss)
         type = "rectangle",
         frame = { x = 0, y = 0, w = w, h = h },
         roundedRectRadii = { xRadius = 12, yRadius = 12 },
-        fillColor = { red = 0.1, green = 0.1, blue = 0.1, alpha = 0.85 },
+        fillColor = { red = 0.1, green = 0.1, blue = 0.1, alpha = 0.70 },
         action = "fill",
     })
 

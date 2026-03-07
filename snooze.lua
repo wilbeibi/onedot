@@ -14,10 +14,12 @@ local MAX_LEVEL = 3
 local BLOCK_MINUTES = 10
 
 -- Bar layout
-local BAR_W = 200
+local BAR_W = 300
 local BAR_H = 20
 local BAR_RADIUS = 6
 local BAR_HIT_PAD = 12        -- extra px around bar for hit testing
+local THUMB_W = 6
+local THUMB_H = 14
 
 -- Canvas-local bar geometry (set during show())
 local barX, barY = 0, 0
@@ -44,7 +46,7 @@ local function snapLevel(localX)
     return math.floor(rel * MAX_LEVEL + 0.5)
 end
 
--- Redraw fill bar, label, and hint for current snoozeLevel
+-- Redraw fill bar, thumb, label, and hint for current snoozeLevel
 local function updateBar(alpha)
     if not canvas then return end
     alpha = alpha or 0.55
@@ -53,33 +55,27 @@ local function updateBar(alpha)
     canvas["fill"].frame = { x = barX, y = barY, w = math.max(0, fillW), h = BAR_H }
     canvas["fill"].fillColor = { white = 1, alpha = snoozeLevel > 0 and alpha or 0 }
 
-    if snoozeLevel > 0 then
-        canvas["label"].frame = { x = barX, y = barY, w = fillW, h = BAR_H }
-        canvas["label"].text = hs.styledtext.new(snoozeLevel * BLOCK_MINUTES .. "m", {
-            font = { name = "Menlo-Bold", size = 11 },
-            color = { white = 0.1, alpha = 0.9 },
-            paragraphStyle = { alignment = "center" },
-        })
-    else
-        canvas["label"].text = hs.styledtext.new("", {
-            font = { name = "Menlo-Bold", size = 11 },
-            color = { white = 0, alpha = 0 },
-            paragraphStyle = { alignment = "center" },
-        })
-    end
+    -- Thumb handle position
+    local thumbX = barX + fillW - THUMB_W / 2
+    if snoozeLevel == 0 then thumbX = barX + 2 end
+    canvas["thumb"].frame = {
+        x = thumbX, y = barY + (BAR_H - THUMB_H) / 2,
+        w = THUMB_W, h = THUMB_H,
+    }
+    canvas["thumb"].fillColor = { white = 1, alpha = dragging and 0.9 or 0.5 }
 
-    local hint
-    if dragging and snoozeLevel > 0 then
-        hint = "release to snooze " .. snoozeLevel * BLOCK_MINUTES .. "m"
-    elseif dragging then
-        hint = "release to cancel · drag right to snooze"
+    -- Bar label: user's voice
+    local barText
+    if snoozeLevel > 0 then
+        barText = "Give me " .. snoozeLevel * BLOCK_MINUTES .. "m"
     else
-        hint = "drag to snooze · click background or esc to dismiss"
+        barText = "not now →"
     end
-    canvas["hint"].text = hs.styledtext.new(hint, {
-        font = { name = "Menlo", size = 10 },
-        color = { white = 1, alpha = 0.45 },
-        paragraphStyle = { alignment = "center" },
+    canvas["label"].frame = { x = barX, y = barY, w = BAR_W, h = BAR_H }
+    canvas["label"].text = hs.styledtext.new(barText, {
+        font = { name = ".AppleSystemUIFont", size = 11 },
+        color = { white = snoozeLevel > 0 and 0.1 or 1, alpha = snoozeLevel > 0 and 0.9 or 0.35 },
+        paragraphStyle = { alignment = snoozeLevel > 0 and "center" or "right" },
     })
 end
 
@@ -150,28 +146,34 @@ function snooze.show(title, body, onSnooze)
     local screen = (win and win:screen() or hs.screen.mainScreen()):frame()
     local padding = 28
     local lineHeight = 18
+    local w = 520
     local charsPerLine = 58  -- Menlo 13 in 520px - padding
 
-    -- Title height
+    -- Title height (system font, 15pt)
     local titleLines = 0
     for line in title:gmatch("[^\n]+") do
         local len = utf8.len(line) or #line
         titleLines = titleLines + math.max(1, math.ceil(len / charsPerLine))
     end
-    local titleH = titleLines * 22  -- larger line height for title
+    local titleH = titleLines * 24  -- larger line height for title
 
-    -- Body height
-    local bodyLines = 0
+    -- Truncate body lines and compute height
+    local truncatedBody = {}
     for line in body:gmatch("[^\n]+") do
         local len = utf8.len(line) or #line
-        bodyLines = bodyLines + math.max(1, math.ceil(len / charsPerLine))
+        if len > charsPerLine then
+            local pos = utf8.offset(line, charsPerLine)
+            if pos then line = line:sub(1, pos - 1) .. "…" end
+        end
+        table.insert(truncatedBody, line)
     end
+    body = table.concat(truncatedBody, "\n")
+    local bodyLines = #truncatedBody
     local bodyH = bodyLines * lineHeight
 
     local textH = titleH + 8 + bodyH  -- 8px gap between title and body
     local hintH = 14
     local LABEL_H = 14
-    local w = 520
     local h = padding + textH + 16 + LABEL_H + 4 + BAR_H + 12 + hintH + padding / 2
 
     canvasX = screen.x + (screen.w - w) / 2
@@ -189,23 +191,23 @@ function snooze.show(title, body, onSnooze)
         type = "rectangle",
         frame = { x = 0, y = 0, w = w, h = h },
         roundedRectRadii = { xRadius = 12, yRadius = 12 },
-        fillColor = { red = 0.1, green = 0.1, blue = 0.1, alpha = 0.85 },
+        fillColor = { red = 0.1, green = 0.1, blue = 0.1, alpha = 0.70 },
         action = "fill",
     })
 
-    -- Title text (bold, larger)
+    -- Title text (system font, bold, 15pt)
     canvas:appendElements({
         id = "title",
         type = "text",
         frame = { x = padding, y = padding, w = w - padding * 2, h = titleH },
         text = hs.styledtext.new(title, {
-            font = { name = "Menlo-Bold", size = 14 },
+            font = { name = ".AppleSystemUIFont", size = 15 },
             color = { white = 1, alpha = 0.95 },
             paragraphStyle = { lineSpacing = 4 },
         }),
     })
 
-    -- Body text
+    -- Body text (Menlo for alignment)
     canvas:appendElements({
         id = "text",
         type = "text",
@@ -270,36 +272,46 @@ function snooze.show(title, body, onSnooze)
         action = "fill",
     })
 
-    -- Time label (inside filled portion)
+    -- Thumb handle (draggable indicator at left edge)
+    canvas:appendElements({
+        id = "thumb",
+        type = "rectangle",
+        frame = { x = barX + 2, y = barY + (BAR_H - THUMB_H) / 2, w = THUMB_W, h = THUMB_H },
+        roundedRectRadii = { xRadius = 2, yRadius = 2 },
+        fillColor = { white = 1, alpha = 0.5 },
+        action = "fill",
+    })
+
+    -- Bar label (user's voice: "not now →" / "Give me 10m")
     canvas:appendElements({
         id = "label",
         type = "text",
-        frame = { x = barX, y = barY, w = 0, h = BAR_H },
-        text = hs.styledtext.new("", {
-            font = { name = "Menlo-Bold", size = 11 },
-            color = { white = 0, alpha = 0 },
-            paragraphStyle = { alignment = "center" },
+        frame = { x = barX, y = barY, w = BAR_W, h = BAR_H },
+        text = hs.styledtext.new("not now →", {
+            font = { name = ".AppleSystemUIFont", size = 11 },
+            color = { white = 1, alpha = 0.35 },
+            paragraphStyle = { alignment = "right" },
         }),
     })
 
-    -- Hint text
+    -- Hint text (system font)
     canvas:appendElements({
         id = "hint",
         type = "text",
         frame = { x = padding, y = barY + BAR_H + 8, w = w - padding * 2, h = hintH },
-        text = hs.styledtext.new("drag to snooze · click background or esc to dismiss", {
-            font = { name = "Menlo", size = 10 },
+        text = hs.styledtext.new("drag to snooze", {
+            font = { name = ".AppleSystemUIFont", size = 10 },
             color = { white = 1, alpha = 0.45 },
             paragraphStyle = { alignment = "center" },
         }),
     })
 
-    -- Canvas handles mouseDown and mouseUp; drag tracked via eventtap
+    -- Canvas handles mouseDown; drag tracked via global eventtap
+    -- Click on bar starts drag; click anywhere else dismisses
     canvas:mouseCallback(function(_, event, _, mx, my)
         if event == "mouseDown" then
             if inBar(mx, my) then
                 dragging = true
-                snoozeLevel = snapLevel(mx)
                 updateBar()
                 startDragTap()
             else

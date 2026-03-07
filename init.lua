@@ -166,7 +166,7 @@ local function updateIndicator(category, app, reason, switching)
             local bulletCount = select(2, summary:gsub("•", ""))
             if bulletCount >= SWITCH_THRESHOLD then
                 snooze.show(
-                    "Context switching detected\n" .. #switchTimes .. " switches in the last " .. math.floor(switchMinutes) .. " min",
+                    "Here's your last " .. math.floor(switchMinutes) .. " minutes",
                     summary,
                     function(minutes)
                         local until_time = os.time() + minutes * 60
