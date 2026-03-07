@@ -89,20 +89,10 @@ def rotate_log():
 def log_jsonl(event, result, **extra):
     """Append one JSON line per tick — classifications, idle skips, tokens, timing."""
     os.makedirs(os.path.dirname(JSONL_PATH), exist_ok=True)
-    entry = {
-        "ts": datetime.now().isoformat(),
-        "event": event,
-        "model": MODEL,
-        "category": result.get("category"),
-        "app": result.get("app"),
-        "activity": result.get("activity"),
-    }
-    if event == "classify":
-        entry["key_content"] = result.get("key_content")
-        entry["confidence"] = result.get("confidence")
-        entry["reason"] = result.get("reason")
-        entry["tokens"] = result.get("tokens")
-        entry["switching"] = result.get("switching")
+    entry = {"ts": datetime.now().isoformat(), "event": event, "model": MODEL}
+    entry.update({k: v for k, v in result.items() if k != "tokens"})
+    if result.get("tokens"):
+        entry["tokens"] = result["tokens"]
     if extra:
         entry.update(extra)
     with open(JSONL_PATH, "a") as f:
@@ -212,24 +202,11 @@ def classify(image_data, app_name, prev_activity):
     return result
 
 
-
-# DEADCODE: merge no longer called from init.lua (activity text reuse makes it redundant)
-def merge_bullets(bullets_text):
-    """Send bullet points to Gemini to merge similar activities and their durations."""
-    client = genai.Client(api_key=API_KEY)
-    response = client.models.generate_content(
-        model=MODEL,
-        contents=[
-            "Here are bullet points of recent activities with durations:\n\n"
-            + bullets_text
-            + "\n\nMerge similar activities, combining their durations. "
-            "Keep it as bullet points (• prefix). Each bullet should end with (Xm). "
-            "Preserve the chronological order of first appearance. "
-            "Be concise — max 8 words per bullet (excluding duration). "
-            "Return ONLY the merged bullet points, nothing else."
-        ],
-    )
-    return response.text.strip()
+def emit_idle(event, state, app_name, dhash_val, file_hash_val, **log_extra):
+    prev = dict(state["last_result"], app=app_name, activity="away from keyboard", idle=True, switching=False)
+    save_state(dhash_val, file_hash_val, prev)
+    log_jsonl(event, prev, **log_extra)
+    print(json.dumps(prev, ensure_ascii=False))
 
 
 def main():
@@ -238,17 +215,6 @@ def main():
     if not API_KEY:
         print("ERROR: GEMINI_API_KEY not set", file=sys.stderr)
         sys.exit(1)
-
-    # Subcommand: merge bullet points from file
-    if len(sys.argv) >= 3 and sys.argv[1] == "merge":
-        with open(sys.argv[2]) as f:
-            bullets = f.read().strip()
-        if not bullets:
-            print("")
-            return
-        merged = merge_bullets(bullets)
-        print(merged)
-        return
 
     if len(sys.argv) < 3:
         print("ERROR: usage: classify.py <image_path> <app_name>", file=sys.stderr)
@@ -270,20 +236,14 @@ def main():
 
     # Tier 1: exact file match — no image processing, no Pillow import
     if state and current_file_hash == state.get("file_hash"):
-        prev = dict(state["last_result"], app=app_name, idle=True, switching=False)
-        log_jsonl("idle_exact", prev)
-        print(json.dumps(prev, ensure_ascii=False))
+        emit_idle("idle_exact", state, app_name, state.get("dhash", 0), current_file_hash)
         return
 
     # Tier 2: perceptual similarity via dHash — catches clock/cursor changes
     current_dhash = dhash(image_data)
     if state and hamming(current_dhash, state.get("dhash", 0)) < DHASH_THRESHOLD:
-        dist = hamming(current_dhash, state["dhash"])
-        prev = dict(state["last_result"], app=app_name, switching=False)
-        save_state(current_dhash, current_file_hash, prev)
-        log_jsonl("idle_dhash", prev, hamming=dist)
-        output = dict(prev, idle=True)
-        print(json.dumps(output, ensure_ascii=False))
+        emit_idle("idle_dhash", state, app_name, current_dhash, current_file_hash,
+                  hamming=hamming(current_dhash, state["dhash"]))
         return
 
     # --- Screen changed: classify with Gemini ---

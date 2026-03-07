@@ -26,7 +26,7 @@ local function readRecentEntries(jsonl_path, minutes)
     if not f then return nil end
 
     local size = f:seek("end")
-    local tail_bytes = 32 * 1024
+    local tail_bytes = 64 * 1024
     if size > tail_bytes then
         f:seek("set", size - tail_bytes)
         f:read("*l") -- skip partial line
@@ -55,28 +55,25 @@ function H.recentActivity(jsonl_path, interval, minutes)
     local entries = readRecentEntries(jsonl_path, minutes)
     if not entries then return {{ title = "No log data yet", disabled = true }} end
 
-    -- Group consecutive same-app entries
-    local groups = {}
-    local cur = { app = entries[1].app, activity = entries[1].activity, ticks = 1 }
-    for i = 2, #entries do
-        if entries[i].app == cur.app then
-            cur.ticks = cur.ticks + 1
-            if entries[i].activity then cur.activity = entries[i].activity end
-        else
-            table.insert(groups, cur)
-            cur = { app = entries[i].app, activity = entries[i].activity, ticks = 1 }
+    -- Aggregate total ticks per activity
+    local totals = {}
+    local order = {}
+    for _, e in ipairs(entries) do
+        local text = e.activity or "idle"
+        if not totals[text] then
+            totals[text] = 0
+            table.insert(order, text)
         end
+        totals[text] = totals[text] + 1
     end
-    table.insert(groups, cur)
+
+    -- Sort by duration descending
+    table.sort(order, function(a, b) return totals[a] > totals[b] end)
 
     local items = {}
-    for _, g in ipairs(groups) do
-        local dur = formatDuration(g.ticks, interval)
-        local display = g.app
-        if g.activity and g.activity ~= "" then
-            display = display .. " — " .. g.activity
-        end
-        display = utf8_trunc(display, 55)
+    for _, text in ipairs(order) do
+        local dur = formatDuration(totals[text], interval)
+        local display = utf8_trunc(text, 55)
         table.insert(items, { title = display .. " (" .. dur .. ")", disabled = true })
     end
     return items
