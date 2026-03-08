@@ -6,7 +6,7 @@ Every week, the average developer loses 41% of their time to things that aren't 
 They don't track it because tracking feels like more work.  
 onedot requires nothing from you. It sits in your menubar, reads the text on your screen, and categorizes what you're doing — automatically, continuously, invisibly.
 
-<img width="326" height="121" alt="image" src="https://github.com/user-attachments/assets/c6e24864-2810-4cdd-bff7-51392dcb42d2" />
+![demo](https://github.com/user-attachments/assets/129e5485-95eb-4f98-9524-c50dddef91ca)
 
 
 ## Categorizing Your Time
