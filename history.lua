@@ -47,7 +47,7 @@ local function readRecentEntries(jsonl_path, minutes)
             local t = parseISO(entry.ts)
             if t and t >= cutoff then
                 table.insert(entries,
-                    { app = entry.app, activity = entry.activity or entry.context, switching = entry.switching, time = t })
+                    { app = entry.app, activity = entry.activity or entry.context, switching = entry.switching, category = entry.category, time = t })
             end
         end
     end
@@ -66,47 +66,44 @@ function H.recentActivity(jsonl_path, interval, minutes)
     for _, e in ipairs(entries) do
         local text = e.activity or "idle"
         if not totals[text] then
-            totals[text] = 0
+            totals[text] = { ticks = 0, category = e.category }
             table.insert(order, text)
         end
-        totals[text] = totals[text] + 1
+        totals[text].ticks = totals[text].ticks + 1
     end
 
-    table.sort(order, function(a, b) return totals[a] > totals[b] end)
+    table.sort(order, function(a, b) return totals[a].ticks > totals[b].ticks end)
 
     local items = {}
     for _, text in ipairs(order) do
-        local dur = formatDuration(totals[text], interval)
+        local dur = formatDuration(totals[text].ticks, interval)
         local display = utf8_trunc(text, 55)
-        table.insert(items, { title = display .. " (" .. dur .. ")", disabled = true })
+        table.insert(items, { title = display .. " (" .. dur .. ")", disabled = true, category = totals[text].category })
     end
     return items
 end
 
-function H.switchingSummary(jsonl_path, interval, minutes)
+function H.switchingSummaryGroups(jsonl_path, interval, minutes)
     local entries = readRecentEntries(jsonl_path, minutes)
     if not entries then return nil end
 
     local groups = {}
-    local cur = { text = entries[1].activity or "idle", ticks = 1 }
+    local cur = { text = entries[1].activity or "idle", ticks = 1, category = entries[1].category }
     for i = 2, #entries do
         local text = entries[i].activity or "idle"
         if text == cur.text then
             cur.ticks = cur.ticks + 1
         else
             table.insert(groups, cur)
-            cur = { text = text, ticks = 1 }
+            cur = { text = text, ticks = 1, category = entries[i].category }
         end
     end
     table.insert(groups, cur)
 
-    local lines = {}
     for _, g in ipairs(groups) do
-        local dur = formatDuration(g.ticks, interval)
-        local bullet = "• " .. g.text .. " (" .. dur .. ")"
-        table.insert(lines, bullet)
+        g.duration = formatDuration(g.ticks, interval)
     end
-    return table.concat(lines, "\n")
+    return groups
 end
 
 return H

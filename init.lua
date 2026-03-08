@@ -90,6 +90,26 @@ local snooze = require("onedot.snooze")
 local JSONL_PATH = os.getenv("HOME") .. "/.config/onedot/log.jsonl"
 local HISTORY_MINUTES = 60
 
+local dotImageCache = {}
+local function colorDotImage(color)
+    if not color then color = COLORS.UNKNOWN end
+    local key = string.format("%.2f%.2f%.2f", color.red or 0, color.green or 0, color.blue or 0)
+    if dotImageCache[key] then return dotImageCache[key] end
+    local size = 12
+    local c = hs.canvas.new({ x = 0, y = 0, w = size, h = size })
+    c:appendElements({
+        type = "circle",
+        center = { x = size / 2, y = size / 2 },
+        radius = size / 2 - 1,
+        fillColor = color,
+        action = "fill",
+    })
+    local img = c:imageFromCanvas()
+    c:delete()
+    dotImageCache[key] = img
+    return img
+end
+
 local function logEntry(entry)
     entry.ts = entry.ts or os.date("%Y-%m-%dT%H:%M:%S")
     entry.model = entry.model or MODEL
@@ -135,9 +155,7 @@ local function clearState(key)
     end
 end
 
-local lastCategory = "UNKNOWN"
-local lastReason = ""
-local lastApp = ""
+local lastResult = { category = "UNKNOWN", reason = "", app = "" }
 local switchTimes = {}
 local overlaySuppressedUntil = 0
 local SWITCH_WINDOW = 600
@@ -157,13 +175,30 @@ local function updateIndicator(category, app, reason, switching)
 
     if #switchTimes >= SWITCH_THRESHOLD and now >= overlaySuppressedUntil then
         local switchMinutes = SWITCH_WINDOW / 60
-        local summary = history.switchingSummary(JSONL_PATH, INTERVAL, switchMinutes)
-        if summary then
-            local bulletCount = select(2, summary:gsub("•", ""))
-            if bulletCount >= SWITCH_THRESHOLD then
+        local groups = history.switchingSummaryGroups(JSONL_PATH, INTERVAL, switchMinutes)
+        if groups then
+            if #groups >= SWITCH_THRESHOLD then
+                local body = hs.styledtext.new("")
+                for i, g in ipairs(groups) do
+                    local dotColor = COLORS[g.category] or COLORS.UNKNOWN
+                    local dot = hs.styledtext.new("● ", {
+                        font = { name = "Menlo", size = 13 },
+                        color = dotColor,
+                    })
+                    local text = hs.styledtext.new(g.text .. " (" .. g.duration .. ")", {
+                        font = { name = "Menlo", size = 13 },
+                        color = { white = 1, alpha = 0.8 },
+                    })
+                    body = body .. dot .. text
+                    if i < #groups then
+                        body = body .. hs.styledtext.new("\n", {
+                            font = { name = "Menlo", size = 13 },
+                        })
+                    end
+                end
                 snooze.show(
                     "Here's your last " .. math.floor(switchMinutes) .. " minutes",
-                    summary,
+                    body,
                     function(minutes)
                         local until_time = os.time() + minutes * 60
                         overlaySuppressedUntil = until_time
@@ -180,9 +215,9 @@ local function updateIndicator(category, app, reason, switching)
         end
     end
 
-    lastCategory = category
-    lastApp = app or ""
-    lastReason = reason or ""
+    lastResult.category = category
+    lastResult.app = app or ""
+    lastResult.reason = reason or ""
     local color = COLORS[category] or COLORS.UNKNOWN
     local switchingColor = (#switchTimes > 0) and COLORS.SWITCHING or nil
 
@@ -192,7 +227,7 @@ local function updateIndicator(category, app, reason, switching)
         indicator.solid(menubar, color, switchingColor)
     end
 
-    menubar:setTooltip(lastCategory == "UNKNOWN" and (lastReason ~= "" and lastReason or "Starting…") or lastApp)
+    menubar:setTooltip(lastResult.category == "UNKNOWN" and (lastResult.reason ~= "" and lastResult.reason or "Starting…") or lastResult.app)
 end
 
 local function captureAndClassify()
@@ -289,10 +324,10 @@ function M.start()
 
     menubar:setMenu(function()
         local items = {}
-        if lastReason ~= "" then
+        if lastResult.reason ~= "" then
             -- Menubar menu items don't wrap, so we break manually
             local line = ""
-            for word in lastReason:gmatch("%S+") do
+            for word in lastResult.reason:gmatch("%S+") do
                 local lineLen = utf8.len(line) or #line
                 local wordLen = utf8.len(word) or #word
                 if lineLen + wordLen + 1 > 40 and lineLen > 0 then
@@ -307,9 +342,15 @@ function M.start()
             end
             table.insert(items, { title = "-" })
         end
+        local activityItems = history.recentActivity(JSONL_PATH, INTERVAL, HISTORY_MINUTES)
+        for _, item in ipairs(activityItems) do
+            if item.category then
+                item.image = colorDotImage(COLORS[item.category] or COLORS.UNKNOWN)
+            end
+        end
         table.insert(items, {
             title = "Last " .. HISTORY_MINUTES .. " minutes",
-            menu = history.recentActivity(JSONL_PATH, INTERVAL, HISTORY_MINUTES),
+            menu = activityItems,
         })
         table.insert(items, { title = "-" })
         if paused then

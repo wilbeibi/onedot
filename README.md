@@ -15,9 +15,10 @@ Hammerspoon takes a screenshot at your configured interval. The AI reads the vis
 
 | Dot | Category | Examples |
 |-----|----------|----------|
-| Green | **OUTPUT** | Writing code, composing docs, running terminal commands, debugging |
-| Blue | **INPUT** | Reading documentation, watching a technical talk, studying code |
-| Orange | **DISTRACTED** | Browsing social media, configuring tools, idle screen |
+| 🟢 | **OUTPUT** | Writing code, composing docs, running terminal commands, debugging |
+| 🔵 | **INPUT** | Reading documentation, watching a technical talk, studying code |
+| 🟠 | **DISTRACTED** | Browsing social media, configuring tools, idle screen |
+| 🟢🟠 | **CONTEXT SWITCH** | Bouncing between YouTube, Slack, and editors |
 
 ## Context-Switch Nudge
 

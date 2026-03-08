@@ -5,7 +5,8 @@ local escModal = nil
 local dragTap = nil
 local onSnoozeCallback = nil
 local snoozeLevel = 0
-local dragging = false
+local state = "idle"       -- "idle" | "dragging" | "flashing"
+local flashTimer = nil
 
 local MAX_LEVEL = 3
 local BLOCK_MINUTES = 10
@@ -22,11 +23,12 @@ local barX, barY = 0, 0
 local canvasX, canvasY = 0, 0
 
 local function cleanup()
+    if flashTimer then flashTimer:stop(); flashTimer = nil end
     if dragTap then dragTap:stop(); dragTap = nil end
     if escModal then escModal:exit(); escModal = nil end
     if canvas then canvas:delete(); canvas = nil end
     snoozeLevel = 0
-    dragging = false
+    state = "idle"
 end
 
 local function dismiss()
@@ -40,6 +42,11 @@ local function snapLevel(localX)
     return math.floor(rel * MAX_LEVEL + 0.5)
 end
 
+-- Idle: bar shows "not now →" text on the bar
+-- Drag right: bar fills to 10m/20m/30m, text on bar becomes "Give me Xm"
+-- Release at >0: bar flashes bright, snoozes for that duration, popup closes
+-- Release at 0: bar resets, popup stays open
+-- Dismiss: click X or press Escape
 local function updateBar(alpha)
     if not canvas then return end
     alpha = alpha or 0.55
@@ -54,32 +61,54 @@ local function updateBar(alpha)
         x = thumbX, y = barY + (BAR_H - THUMB_H) / 2,
         w = THUMB_W, h = THUMB_H,
     }
-    canvas["thumb"].fillColor = { white = 1, alpha = dragging and 0.9 or 0.5 }
+    canvas["thumb"].fillColor = { white = 1, alpha = state == "dragging" and 0.9 or 0.5 }
 
-    local barText
+    local barText, labelX, labelW, labelAlign, labelColor
     if snoozeLevel > 0 then
         barText = "Give me " .. snoozeLevel * BLOCK_MINUTES .. "m"
+        labelX = barX
+        labelW = fillW
+        labelAlign = "center"
+        labelColor = { white = 0.1, alpha = 0.9 }
     else
         barText = "not now →"
+        labelX = barX
+        labelW = BAR_W
+        labelAlign = "right"
+        labelColor = { white = 1, alpha = 0.35 }
     end
-    canvas["label"].frame = { x = barX, y = barY, w = BAR_W, h = BAR_H }
+    local textPad = (BAR_H - 13) / 2  -- 13 ≈ rendered height of 11pt font
+    canvas["label"].frame = { x = labelX, y = barY + textPad, w = labelW, h = BAR_H - textPad }
     canvas["label"].text = hs.styledtext.new(barText, {
         font = { name = ".AppleSystemUIFont", size = 11 },
-        color = { white = snoozeLevel > 0 and 0.1 or 1, alpha = snoozeLevel > 0 and 0.9 or 0.35 },
-        paragraphStyle = { alignment = snoozeLevel > 0 and "center" or "right" },
+        color = labelColor,
+        paragraphStyle = { alignment = labelAlign },
     })
 end
 
 local function confirmNow()
     local minutes = snoozeLevel * BLOCK_MINUTES
-    if minutes == 0 then dismiss(); return end
-    local cb = onSnoozeCallback
-    onSnoozeCallback = nil
-    updateBar(1.0)
-    hs.timer.doAfter(0.1, function()
-        cleanup()
-        if cb then cb(minutes) end
-    end)
+    if minutes == 0 then return end
+    state = "flashing"
+    local interval = 0.15
+    local count = 0
+    local function flash()
+        if state ~= "flashing" or not canvas then return end
+        count = count + 1
+        if count > 6 then
+            local cb = onSnoozeCallback
+            cleanup()
+            if cb then cb(minutes) end
+            return
+        end
+        updateBar(count % 2 == 1 and 1.0 or 0.2)
+        flashTimer = hs.timer.doAfter(interval, flash)
+    end
+    flash()
+end
+
+local function stopDragTap()
+    if dragTap then dragTap:stop(); dragTap = nil end
 end
 
 -- Canvas mouse callbacks stop at canvas edges; global eventtap keeps drag working
@@ -91,7 +120,7 @@ local function startDragTap()
             if not canvas then return false end
             local evType = ev:getType()
             if evType == hs.eventtap.event.types.leftMouseDragged then
-                if not dragging then return false end
+                if state ~= "dragging" then return false end
                 local pos = hs.mouse.absolutePosition()
                 local localX = pos.x - canvasX
                 local newLevel = snapLevel(localX)
@@ -100,8 +129,8 @@ local function startDragTap()
                     updateBar()
                 end
             elseif evType == hs.eventtap.event.types.leftMouseUp then
-                if dragging then
-                    dragging = false
+                if state == "dragging" then
+                    state = "idle"
                     stopDragTap()
                     if snoozeLevel > 0 then
                         confirmNow()
@@ -115,10 +144,6 @@ local function startDragTap()
         end
     )
     dragTap:start()
-end
-
-local function stopDragTap()
-    if dragTap then dragTap:stop(); dragTap = nil end
 end
 
 local function inBar(mx, my)
@@ -145,19 +170,13 @@ function snooze.show(title, body, onSnooze)
     end
     local titleH = titleLines * 24
 
-    -- hs.canvas text elements don't wrap, so we truncate manually
-    local truncatedBody = {}
-    for line in body:gmatch("[^\n]+") do
+    local bodyStr = type(body) == "string" and body or body:getString()
+    local bodyWrappedLines = 0
+    for line in bodyStr:gmatch("[^\n]+") do
         local len = utf8.len(line) or #line
-        if len > charsPerLine then
-            local pos = utf8.offset(line, charsPerLine)
-            if pos then line = line:sub(1, pos - 1) .. "…" end
-        end
-        table.insert(truncatedBody, line)
+        bodyWrappedLines = bodyWrappedLines + math.max(1, math.ceil(len / charsPerLine))
     end
-    body = table.concat(truncatedBody, "\n")
-    local bodyLines = #truncatedBody
-    local bodyH = bodyLines * lineHeight
+    local bodyH = bodyWrappedLines * lineHeight
 
     local textH = titleH + 8 + bodyH
     local hintH = 14
@@ -182,6 +201,19 @@ function snooze.show(title, body, onSnooze)
         action = "fill",
     })
 
+    local closeSize = 20
+    local closePad = 10
+    canvas:appendElements({
+        id = "close",
+        type = "text",
+        frame = { x = w - closeSize - closePad, y = closePad, w = closeSize, h = closeSize },
+        text = hs.styledtext.new("\u{00D7}", {
+            font = { name = ".AppleSystemUIFont", size = 16 },
+            color = { white = 1, alpha = 0.4 },
+            paragraphStyle = { alignment = "center" },
+        }),
+    })
+
     canvas:appendElements({
         id = "title",
         type = "text",
@@ -193,15 +225,21 @@ function snooze.show(title, body, onSnooze)
         }),
     })
 
+    local bodyStyled
+    if type(body) == "userdata" then
+        bodyStyled = body
+    else
+        bodyStyled = hs.styledtext.new(body, {
+            font = { name = "Menlo", size = 13 },
+            color = { white = 1, alpha = 0.8 },
+            paragraphStyle = { lineSpacing = 4 },
+        })
+    end
     canvas:appendElements({
         id = "text",
         type = "text",
         frame = { x = padding, y = padding + titleH + 8, w = w - padding * 2, h = bodyH },
-        text = hs.styledtext.new(body, {
-            font = { name = "Menlo", size = 13 },
-            color = { white = 1, alpha = 0.8 },
-            paragraphStyle = { lineSpacing = 4 },
-        }),
+        text = bodyStyled,
     })
 
     local segW = BAR_W / MAX_LEVEL
@@ -284,14 +322,19 @@ function snooze.show(title, body, onSnooze)
         }),
     })
 
+    local function inClose(mx, my)
+        return mx >= (w - closeSize - closePad * 2) and mx <= w
+           and my >= 0 and my <= (closeSize + closePad * 2)
+    end
+
     canvas:mouseCallback(function(_, event, _, mx, my)
         if event == "mouseDown" then
-            if inBar(mx, my) then
-                dragging = true
+            if inClose(mx, my) then
+                dismiss()
+            elseif inBar(mx, my) then
+                state = "dragging"
                 updateBar()
                 startDragTap()
-            else
-                dismiss()
             end
         end
     end)
