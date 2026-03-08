@@ -284,7 +284,7 @@ local function captureAndClassify()
         end,
         { "run", SCRIPT_PATH, SCREENSHOT_PATH, appName }
     )
-    currentTask:setEnvironment({ GEMINI_API_KEY = API_KEY, MODEL = MODEL })
+    currentTask:setEnvironment({ GEMINI_API_KEY = API_KEY })
     currentTask:start()
 end
 

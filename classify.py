@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["google-genai", "Pillow"]
+# dependencies = ["google-genai", "Pillow", "pyyaml"]
 # ///
 
 import hashlib
@@ -12,8 +12,14 @@ import sys
 from datetime import datetime
 from google import genai
 
-API_KEY = os.environ.get("GEMINI_API_KEY", "")
-MODEL = os.environ.get("MODEL", "gemini-2.5-flash")
+import yaml
+
+CONFIG_PATH = os.path.expanduser("~/.config/onedot/config.yaml")
+
+with open(CONFIG_PATH) as f:
+    _config = yaml.safe_load(f)
+API_KEY = _config.get("api_key", "")
+MODEL = _config.get("model", "gemini-2.5-flash")
 STATE_PATH = "/tmp/onedot-state.json"
 JSONL_PATH = os.path.expanduser("~/.config/onedot/log.jsonl")
 DHASH_THRESHOLD = 6  # below this = "same screen" (0=identical, 64=opposite)
@@ -137,7 +143,12 @@ def save_state(dhash_val, file_hash_val, result):
 
 
 def classify(image_data, app_name, prev_activity):
-    client = genai.Client(api_key=API_KEY)
+    client = genai.Client(
+        api_key=API_KEY,
+        http_options=genai.types.HttpOptions(
+            retry_options=genai.types.HttpRetryOptions(attempts=5),
+        ),
+    )
     prompt_text = f"The foreground application is: {app_name}\n\n"
     if prev_activity:
         prompt_text += f"The user's previous activity was: {prev_activity}\n\n"
@@ -195,10 +206,14 @@ def classify(image_data, app_name, prev_activity):
             result[k] = re.sub(r"[\x00-\x09\x0b\x0c\x0e-\x1f]+", " ", v).strip()
     result["app"] = app_name
     if response.usage_metadata:
+        m = response.usage_metadata
         result["tokens"] = {
-            "input": response.usage_metadata.prompt_token_count,
-            "output": response.usage_metadata.candidates_token_count,
+            "input": m.prompt_token_count,
+            "output": m.candidates_token_count,
+            "total": m.total_token_count,
         }
+        if getattr(m, "thoughts_token_count", None):
+            result["tokens"]["thinking"] = m.thoughts_token_count
     return result
 
 
