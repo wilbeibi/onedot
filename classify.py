@@ -19,7 +19,7 @@ CONFIG_PATH = os.path.expanduser("~/.config/onedot/config.yaml")
 with open(CONFIG_PATH) as f:
     _config = yaml.safe_load(f)
 API_KEY = _config.get("api_key", "")
-MODEL = _config.get("model", "gemini-2.5-flash")
+MODEL = _config.get("model", "gemini-3.1-flash-lite-preview")
 STATE_PATH = "/tmp/onedot-state.json"
 JSONL_PATH = os.path.expanduser("~/.config/onedot/log.jsonl")
 DHASH_THRESHOLD = 6  # below this = "same screen" (0=identical, 64=opposite)

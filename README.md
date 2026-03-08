@@ -64,7 +64,7 @@ Everything is logged locally to `~/.config/onedot/log.jsonl`. Each entry include
 
 ```yaml
 api_key: your-gemini-api-key
-model: gemini-2.5-flash   # any Gemini model
+model: gemini-3.1-flash-lite-preview   # any Gemini model
 interval_secs: 30          # seconds between screen checks
 exclude_apps: 1Password, Keychain Access, Slack  # optional, comma-separated app names
 ```
