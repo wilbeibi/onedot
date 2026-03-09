@@ -8,8 +8,7 @@ local snoozeLevel = 0
 local state = "idle"       -- "idle" | "dragging" | "flashing"
 local flashTimer = nil
 
-local MAX_LEVEL = 3
-local BLOCK_MINUTES = 10
+local SNOOZE_MINUTES = { 10, 30, 120 }  -- 10m, 30m, 2hr
 
 local BAR_W = 300
 local BAR_H = 20
@@ -39,7 +38,7 @@ end
 local function snapLevel(localX)
     local rel = (localX - barX) / BAR_W
     rel = math.max(0, math.min(1, rel))
-    return math.floor(rel * MAX_LEVEL + 0.5)
+    return math.floor(rel * #SNOOZE_MINUTES + 0.5)
 end
 
 -- Idle: bar shows "not now →" text on the bar
@@ -50,7 +49,7 @@ end
 local function updateBar(alpha)
     if not canvas then return end
     alpha = alpha or 0.55
-    local fillW = (snoozeLevel / MAX_LEVEL) * BAR_W
+    local fillW = (snoozeLevel / #SNOOZE_MINUTES) * BAR_W
 
     canvas["fill"].frame = { x = barX, y = barY, w = math.max(0, fillW), h = BAR_H }
     canvas["fill"].fillColor = { white = 1, alpha = snoozeLevel > 0 and alpha or 0 }
@@ -65,7 +64,8 @@ local function updateBar(alpha)
 
     local barText, labelX, labelW, labelAlign, labelColor
     if snoozeLevel > 0 then
-        barText = "Give me " .. snoozeLevel * BLOCK_MINUTES .. "m"
+        local mins = SNOOZE_MINUTES[snoozeLevel]
+        barText = "Give me " .. (mins >= 60 and (mins / 60) .. "hr" or mins .. "m")
         labelX = barX
         labelW = fillW
         labelAlign = "center"
@@ -87,7 +87,7 @@ local function updateBar(alpha)
 end
 
 local function confirmNow()
-    local minutes = snoozeLevel * BLOCK_MINUTES
+    local minutes = SNOOZE_MINUTES[snoozeLevel] or 0
     if minutes == 0 then return end
     state = "flashing"
     local interval = 0.15
@@ -242,14 +242,16 @@ function snooze.show(title, body, onSnooze)
         text = bodyStyled,
     })
 
-    local segW = BAR_W / MAX_LEVEL
+    local segW = BAR_W / #SNOOZE_MINUTES
     local labelY = barY - LABEL_H - 2
-    for i = 1, MAX_LEVEL do
+    for i = 1, #SNOOZE_MINUTES do
+        local mins = SNOOZE_MINUTES[i]
+        local segLabel = mins >= 60 and (mins / 60) .. "hr" or mins .. "m"
         canvas:appendElements({
             id = "seg" .. i,
             type = "text",
             frame = { x = barX + segW * (i - 1), y = labelY, w = segW, h = LABEL_H },
-            text = hs.styledtext.new(i * BLOCK_MINUTES .. "m", {
+            text = hs.styledtext.new(segLabel, {
                 font = { name = "Menlo", size = 10 },
                 color = { white = 1, alpha = 0.4 },
                 paragraphStyle = { alignment = "center" },
@@ -268,7 +270,7 @@ function snooze.show(title, body, onSnooze)
         strokeWidth = 1,
     })
 
-    for i = 1, MAX_LEVEL - 1 do
+    for i = 1, #SNOOZE_MINUTES - 1 do
         canvas:appendElements({
             id = "tick" .. i,
             type = "segments",
