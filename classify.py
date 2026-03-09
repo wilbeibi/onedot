@@ -23,6 +23,7 @@ MODEL = _config.get("model", "gemini-3.1-flash-lite-preview")
 STATE_PATH = "/tmp/onedot-state.json"
 JSONL_PATH = os.path.expanduser("~/.config/onedot/log.jsonl")
 DHASH_THRESHOLD = 6  # below this = "same screen" (0=identical, 64=opposite)
+IDLE_STREAK_THRESHOLD = 3  # consecutive idle ticks before marking AFK
 PROMPT = """Classify the user's current screen activity. Do NOT just identify the application — you must READ the visible text content to determine what the user is actually doing.
 
 Step 1: Read the title bar, tab titles, and URL bar to identify the foreground app.
@@ -137,9 +138,9 @@ def load_state():
         return None
 
 
-def save_state(dhash_val, file_hash_val, result):
+def save_state(dhash_val, file_hash_val, result, idle_streak=0):
     with open(STATE_PATH, "w") as f:
-        json.dump({"dhash": dhash_val, "file_hash": file_hash_val, "last_result": result}, f, ensure_ascii=False)
+        json.dump({"dhash": dhash_val, "file_hash": file_hash_val, "last_result": result, "idle_streak": idle_streak}, f, ensure_ascii=False)
 
 
 def classify(image_data, app_name, prev_activity):
@@ -218,8 +219,15 @@ def classify(image_data, app_name, prev_activity):
 
 
 def emit_idle(event, state, app_name, dhash_val, file_hash_val, **log_extra):
-    prev = dict(state["last_result"], app=app_name, activity="away from keyboard", idle=True, switching=False)
-    save_state(dhash_val, file_hash_val, prev)
+    streak = state.get("idle_streak", 0) + 1
+    prev = state["last_result"]
+    if streak < IDLE_STREAK_THRESHOLD:
+        save_state(dhash_val, file_hash_val, prev, idle_streak=streak)
+        print(json.dumps(prev, ensure_ascii=False))
+        return
+
+    prev = dict(prev, app=app_name, activity="away from keyboard", idle=True, switching=False)
+    save_state(dhash_val, file_hash_val, prev, idle_streak=streak)
     log_jsonl(event, prev, **log_extra)
     print(json.dumps(prev, ensure_ascii=False))
 
