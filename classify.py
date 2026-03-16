@@ -30,6 +30,8 @@ Step 1: Read the title bar, tab titles, and URL bar to identify the foreground a
 Step 2: READ the visible text in the main content area — conversation messages, code, article text, video titles, terminal output. Quote the most relevant snippet in key_content.
 Step 3: Based on what you read, classify the activity.
 
+Grounding rule: the activity label must stay close to the exact visible text. Do NOT infer hidden topics, genre, or entities from partial titles, channel names, thumbnails, or your own background knowledge. If the visible text is partial or ambiguous, use a generic label like "watching Bilibili video", "reading article in browser", or "working in terminal".
+
 Categories:
 
 OUTPUT — Actively producing work. Signals: cursor in editable area, recent code edits, composing text, running project commands, solving a problem, writing a solution. Includes: coding, terminal commands for a project, writing notes/docs, LeetCode (any stage), using AI to generate/debug/build code, committing/pushing.
@@ -46,7 +48,7 @@ Disambiguation — READ the actual content, don't judge by app name alone:
 - Terminal / Claude Code agent: READ the terminal output.
   OUTPUT: running tests, git operations, building, editing files, executing project commands.
   DISTRACTED: configuring unrelated tools, installing random packages, SSH/network setup not for current project, idle prompt with no recent commands.
-- YouTube/Bilibili: READ the video title. INPUT only if clearly a tech talk, tutorial, or lecture. Entertainment, anime, vlogs, scenic → DISTRACTED.
+- YouTube/Bilibili: READ the visible video title or subtitles. INPUT only if clearly a tech talk, tutorial, or lecture. Entertainment, anime, vlogs, scenic → DISTRACTED. Never invent a more specific topic than the visible text supports.
 - Reddit/Twitter/HN: INPUT only if reading a specific technical thread. Scrolling a feed → DISTRACTED.
 - LeetCode/coding challenges: always OUTPUT — reading problem, writing solution, debugging are all producing.
 - Obsidian/notes: OUTPUT if actively writing. INPUT if reading/reviewing.
@@ -54,20 +56,14 @@ Disambiguation — READ the actual content, don't judge by app name alone:
 - When genuinely ambiguous between OUTPUT and INPUT, prefer OUTPUT if a cursor is active in an editable area.
 
 Examples:
-- VS Code with cursor in code, recent edits visible → OUTPUT
-- Terminal running pytest, git push, or build commands → OUTPUT
-- Claude Code showing "editing file src/auth.py" or generating code → OUTPUT
-- AI chat with visible code blocks and implementation discussion → OUTPUT
-- LeetCode at any stage → OUTPUT
-- AI chat asking "explain how React hooks work" with explanation visible → INPUT
-- Browser showing React docs, scroll mid-page → INPUT
-- YouTube titled "System Design Interview - Distributed Cache" → INPUT
-- AI chat with "what should I work on today" or rambling conversation → DISTRACTED
-- Claude Code idle prompt, no recent commands, user hasn't typed → DISTRACTED
-- Bilibili showing anime or vlogs → DISTRACTED
-- Twitter/Reddit feed scrolling → DISTRACTED
-- Configuring Tailscale, Obsidian plugins, SSH keys → DISTRACTED
-- Lock screen or screensaver → DISTRACTED
+- Code editor with visible edits → OUTPUT
+- Terminal running project commands or tests → OUTPUT
+- AI chat discussing implementation with code or file paths → OUTPUT
+- Browser reading docs or a technical article → INPUT
+- Video with a clearly technical title or lecture content → INPUT
+- Entertainment or commentary video with no technical content → DISTRACTED
+- Social feed, idle screen, or unrelated tool setup → DISTRACTED
+- If the screen is ambiguous, keep the label generic and lower confidence
 
 For key_content: quote the most classification-relevant text you can read on screen (a code snippet, conversation message, article title, video title, or terminal command). Max 40 words. This is critical for accurate classification.
 
@@ -169,7 +165,7 @@ def classify(image_data, app_name, prev_activity):
                 "properties": {
                     "activity": {
                         "type": "STRING",
-                        "description": "The specific activity, without the app name. E.g. 'editing init.lua timer logic', 'reading React hooks docs', 'watching 外星人纪录片'. Max 10 words. If the work is highly similar to the previous activity, reuse the previous activity text exactly.",
+                        "description": "The specific activity, without the app name. E.g. 'editing init.lua timer logic', 'reading React hooks docs', 'watching Bilibili video'. Must be directly supported by visible text. Prefer exact visible nouns or a generic label when the screen is ambiguous. Do not invent specific subjects from partial titles, channel names, or thumbnails. Max 10 words. If the work is highly similar to the previous activity, reuse the previous activity text only when the current screen still clearly supports that exact wording.",
                     },
                     "key_content": {
                         "type": "STRING",
@@ -182,7 +178,7 @@ def classify(image_data, app_name, prev_activity):
                     },
                     "confidence": {
                         "type": "NUMBER",
-                        "description": "Classification confidence from 0.0 to 1.0",
+                        "description": "Classification confidence from 0.0 to 1.0. Lower confidence when the visible text is partial, occluded, or ambiguous.",
                     },
                     "reason": {
                         "type": "STRING",

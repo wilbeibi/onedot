@@ -47,7 +47,7 @@ local function readRecentEntries(jsonl_path, minutes)
             local t = parseISO(entry.ts)
             if t and t >= cutoff then
                 table.insert(entries,
-                    { app = entry.app, activity = entry.activity or entry.context, switching = entry.switching, category = entry.category, time = t })
+                    { app = entry.app, activity = entry.activity or entry.context, switching = entry.switching, category = entry.category, time = t, idle = entry.idle })
             end
         end
     end
@@ -87,15 +87,23 @@ function H.switchingSummaryGroups(jsonl_path, interval, minutes)
     local entries = readRecentEntries(jsonl_path, minutes)
     if not entries then return nil end
 
+    local activeEntries = {}
+    for _, entry in ipairs(entries) do
+        if not entry.idle and entry.activity ~= "away from keyboard" then
+            table.insert(activeEntries, entry)
+        end
+    end
+    if #activeEntries == 0 then return nil end
+
     local groups = {}
-    local cur = { text = entries[1].activity or "idle", ticks = 1, category = entries[1].category }
-    for i = 2, #entries do
-        local text = entries[i].activity or "idle"
+    local cur = { text = activeEntries[1].activity or "idle", ticks = 1, category = activeEntries[1].category }
+    for i = 2, #activeEntries do
+        local text = activeEntries[i].activity or "idle"
         if text == cur.text then
             cur.ticks = cur.ticks + 1
         else
             table.insert(groups, cur)
-            cur = { text = text, ticks = 1, category = entries[i].category }
+            cur = { text = text, ticks = 1, category = activeEntries[i].category }
         end
     end
     table.insert(groups, cur)

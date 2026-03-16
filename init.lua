@@ -161,11 +161,12 @@ local overlaySuppressedUntil = 0
 local SWITCH_WINDOW = 600
 local SWITCH_THRESHOLD = 5
 
-local function updateIndicator(category, app, reason, switching)
+local function updateIndicator(category, app, reason, switching, idle)
     if not menubar then return end
 
     local now = os.time()
-    if switching then
+    local countedSwitch = switching and not idle
+    if countedSwitch then
         table.insert(switchTimes, now)
     end
     local cutoff = now - SWITCH_WINDOW
@@ -173,7 +174,7 @@ local function updateIndicator(category, app, reason, switching)
         table.remove(switchTimes, 1)
     end
 
-    if #switchTimes >= SWITCH_THRESHOLD and now >= overlaySuppressedUntil then
+    if countedSwitch and #switchTimes >= SWITCH_THRESHOLD and now >= overlaySuppressedUntil then
         local switchMinutes = SWITCH_WINDOW / 60
         local groups = history.switchingSummaryGroups(JSONL_PATH, INTERVAL, switchMinutes)
         if groups then
@@ -239,7 +240,7 @@ local function captureAndClassify()
 
     if EXCLUDED_APPS[appName] then
         logEntry({ event = "excluded", category = "EXCLUDED", app = appName, activity = "excluded", reason = "excluded app" })
-        updateIndicator("UNKNOWN", appName .. " — excluded", "App excluded from capture", false)
+        updateIndicator("UNKNOWN", appName .. " — excluded", "App excluded from capture", false, false)
         return
     end
 
@@ -270,15 +271,15 @@ local function captureAndClassify()
                         if result.activity and result.activity ~= "" then
                             display = appName .. " — " .. result.activity
                         end
-                        updateIndicator(result.category, display, result.reason, result.switching)
+                        updateIndicator(result.category, display, result.reason, result.switching, result.idle)
                     else
                         print("[onedot] unknown category: " .. tostring(result.category))
-                        updateIndicator("UNKNOWN", appName, "Unknown category: " .. tostring(result.category), false)
+                        updateIndicator("UNKNOWN", appName, "Unknown category: " .. tostring(result.category), false, false)
                     end
                 end
             else
                 print("[onedot] error: " .. (stderr or "unknown"))
-                updateIndicator("ERROR", nil, "Classification failed", nil)
+                updateIndicator("ERROR", nil, "Classification failed", nil, false)
             end
             currentTask = nil
         end,
@@ -292,7 +293,7 @@ function M.start()
     if menubar then return end
 
     menubar = hs.menubar.new()
-    updateIndicator("UNKNOWN")
+    updateIndicator("UNKNOWN", nil, nil, false, false)
 
     -- Survive Hammerspoon reloads: restore pause/snooze timers
     local state = readState()

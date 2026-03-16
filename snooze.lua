@@ -35,6 +35,16 @@ local function dismiss()
     onSnoozeCallback = nil
 end
 
+local function minutesUntilTomorrow()
+    local now = os.time()
+    local tomorrow = os.date("*t", now)
+    tomorrow.day = tomorrow.day + 1
+    tomorrow.hour = 0
+    tomorrow.min = 0
+    tomorrow.sec = 0
+    return math.max(1, math.ceil((os.time(tomorrow) - now) / 60))
+end
+
 local function snapLevel(localX)
     local rel = (localX - barX) / BAR_W
     rel = math.max(0, math.min(1, rel))
@@ -65,7 +75,7 @@ local function updateBar(alpha)
     local barText, labelX, labelW, labelAlign, labelColor
     if snoozeLevel > 0 then
         local mins = SNOOZE_MINUTES[snoozeLevel]
-        barText = "Give me " .. (mins >= 60 and (mins / 60) .. "hr" or mins .. "m")
+        barText = "Give me " .. (mins >= 60 and (mins / 60) .. "h" or mins .. "m")
         labelX = barX
         labelW = fillW
         labelAlign = "center"
@@ -180,8 +190,9 @@ function snooze.show(title, body, onSnooze)
 
     local textH = titleH + 8 + bodyH
     local hintH = 14
+    local tomorrowH = 18
     local LABEL_H = 14
-    local h = padding + textH + 16 + LABEL_H + 4 + BAR_H + 12 + hintH + padding / 2
+    local h = padding + textH + 16 + LABEL_H + 4 + BAR_H + 12 + hintH + 8 + tomorrowH + padding / 2
 
     canvasX = screen.x + (screen.w - w) / 2
     canvasY = screen.y + (screen.h - h) / 2
@@ -246,7 +257,7 @@ function snooze.show(title, body, onSnooze)
     local labelY = barY - LABEL_H - 2
     for i = 1, #SNOOZE_MINUTES do
         local mins = SNOOZE_MINUTES[i]
-        local segLabel = mins >= 60 and (mins / 60) .. "hr" or mins .. "m"
+        local segLabel = mins >= 60 and (mins / 60) .. "h" or mins .. "m"
         canvas:appendElements({
             id = "seg" .. i,
             type = "text",
@@ -324,15 +335,36 @@ function snooze.show(title, body, onSnooze)
         }),
     })
 
+    local tomorrowY = barY + BAR_H + 8 + hintH + 8
+    canvas:appendElements({
+        id = "tomorrow",
+        type = "text",
+        frame = { x = padding, y = tomorrowY, w = w - padding * 2, h = tomorrowH },
+        text = hs.styledtext.new("Until tomorrow", {
+            font = { name = ".AppleSystemUIFont", size = 11 },
+            color = { white = 1, alpha = 0.72 },
+            paragraphStyle = { alignment = "center" },
+        }),
+    })
+
     local function inClose(mx, my)
         return mx >= (w - closeSize - closePad * 2) and mx <= w
            and my >= 0 and my <= (closeSize + closePad * 2)
+    end
+
+    local function inTomorrow(mx, my)
+        return mx >= padding and mx <= (w - padding)
+           and my >= tomorrowY and my <= (tomorrowY + tomorrowH)
     end
 
     canvas:mouseCallback(function(_, event, _, mx, my)
         if event == "mouseDown" then
             if inClose(mx, my) then
                 dismiss()
+            elseif inTomorrow(mx, my) then
+                local cb = onSnoozeCallback
+                cleanup()
+                if cb then cb(minutesUntilTomorrow()) end
             elseif inBar(mx, my) then
                 state = "dragging"
                 updateBar()
